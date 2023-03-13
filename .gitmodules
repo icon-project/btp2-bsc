@@ -7,3 +7,6 @@
 [submodule "solidity"]
 	path = solidity
 	url = https://github.com/icon-project/btp2-solidity.git
+[submodule "e2edemo/docker/bsc"]
+	path = e2edemo/docker/bsc
+	url = https://github.com/kornery/bsc-docker.git

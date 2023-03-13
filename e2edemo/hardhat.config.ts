@@ -9,6 +9,13 @@ const config: HardhatUserConfig = {
     artifacts: "./solidity/build/artifacts"
   },
   networks: {
+      "bsc-docker": {
+          url: "http://localhost:8545",
+          accounts: [
+              // address: 0x59b02D4d2F94ea5c55230715a58EBb0b703bCD4B
+              '0xc484de1ef84e998869d59752d1f09bffa161673d54250ea152ec82d684e2f154'
+          ]
+      },
       "bsc-testnet": {
           url: "https://data-seed-prebsc-1-s1.binance.org:8545",
           accounts: [

@@ -5,7 +5,7 @@ GRADLE = ./gradlew
 
 HARDHAT = npx hardhat
 TS_NODE = npx ts-node
-NETWORK = --network bsc-testnet
+NETWORK = --network bsc-docker
 SOLIDITY_CONTRACTS = ./solidity/contracts
 
 .DEFAULT_GOAL := all
@@ -89,12 +89,37 @@ deploy-dapp:
 
 deploy-all: deploy-bmc deploy-bmv deploy-xcall deploy-dapp
 
-start-nodes:
+build-bsc:
+	@ echo ">>> Build bsc-geth" ; \
+	cd docker/bsc; \
+	make build-simple
+
+bootstrap-bsc: build-bsc
+	@ echo ">>> Bootstrap bsc-geth" ; \
+	cd docker/bsc; \
+	make bootstrap-simple
+
+start-bsc:
+	@ echo ">>> Start bsc-geth" ; \
+	cd docker/bsc; \
+	make start-simple
+
+start-nodes: start-bsc
 	@ echo ">>> Start nodes" ; \
 	cd docker; \
 	docker compose up icon-node -d
 
-stop-nodes:
+stop-bsc:
+	@ echo ">>> Start nodes" ; \
+	cd docker/bsc; \
+	make stop-all
+
+reset-bsc:
+	@ echo ">>> Start nodes" ; \
+	cd docker/bsc; \
+	make reset
+
+stop-nodes: stop-bsc reset-bsc
 	@ echo ">>> Stop nodes" ; \
 	cd docker; \
 	docker compose down
