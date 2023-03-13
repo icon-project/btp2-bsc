@@ -28,12 +28,12 @@ const (
 )
 
 type Config struct {
-	ChainID     *big.Int `json:"chain_id"`
-	EPOCH       uint64   `json:"epoch"`
-	StartNumber uint64   `json:"start_height"`
-	Endpoint    string   `json:"endpoint"`
-	DBType      string   `json:"db_type"`
-	DBPath      string   `json:"db_path"`
+	ChainID     uint64 `json:"chain_id"`
+	EPOCH       uint64 `json:"epoch"`
+	StartNumber uint64 `json:"start_height"`
+	Endpoint    string `json:"endpoint"`
+	DBType      string `json:"db_type"`
+	DBPath      string `json:"db_path"`
 	// TODO support multi-depth env options
 	//DB          DBConfig `json:"db"`
 	SrcAddress btp.BtpAddress
@@ -63,7 +63,7 @@ type receiver struct {
 
 func NewReceiver(config Config, log log.Logger) *receiver {
 	o := &receiver{
-		chainId: config.ChainID,
+		chainId: new(big.Int).SetUint64(config.ChainID),
 		epoch:   config.EPOCH,
 		start:   config.StartNumber,
 		heads:   NewWaitQueue(256),

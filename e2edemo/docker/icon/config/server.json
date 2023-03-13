@@ -30,7 +30,7 @@
       "mac": "1ef4ff51fdee8d4de9cf59e160da049eb0099eb691510994f5eca492f56c817a"
     }
   },
-  "log_level": "debug",
+  "log_level": "trace",
   "console_level": "trace",
   "log_writer": {
     "filename": "../logs/goloop.log",

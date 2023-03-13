@@ -3,7 +3,11 @@ import { ethers } from 'hardhat';
 import {Contract} from "../icon/contract";
 import {IconNetwork} from "../icon/network";
 import {Deployments} from "./config";
-const {JAVASCORE_PATH} = process.env
+const {
+    E2E_ICON_NETWORK_ID,
+    E2E_ETH_NETWORK_ID,
+    JAVASCORE_PATH
+} = process.env
 
 const deployments = new Deployments();
 
