@@ -28,9 +28,9 @@ const (
 )
 
 type Config struct {
-	ChainID     uint64 `json:"chain_id"`
-	EPOCH       uint64 `json:"epoch"`
-	StartNumber uint64 `json:"start_height"`
+	ChainID     int    `json:"chain_id"`
+	Epoch       int    `json:"epoch"`
+	StartNumber int    `json:"start_height"`
 	Endpoint    string `json:"endpoint"`
 	DBType      string `json:"db_type"`
 	DBPath      string `json:"db_path"`
@@ -63,9 +63,9 @@ type receiver struct {
 
 func NewReceiver(config Config, log log.Logger) *receiver {
 	o := &receiver{
-		chainId: new(big.Int).SetUint64(config.ChainID),
-		epoch:   config.EPOCH,
-		start:   config.StartNumber,
+		chainId: big.NewInt(int64(config.ChainID)),
+		epoch:   uint64(config.Epoch),
+		start:   uint64(config.StartNumber),
 		heads:   NewWaitQueue(256),
 		msgs:    NewWaitQueue(256),
 		client:  NewClient(config.Endpoint, config.SrcAddress, config.DstAddress, log),
@@ -87,6 +87,11 @@ func NewReceiver(config Config, log log.Logger) *receiver {
 			panic(err)
 		} else {
 			o.accumulator = mta.NewExtAccumulator([]byte("accumulator"), bucket, int64(o.start))
+			if bucket.Has([]byte("accumulator")) {
+				if err = o.accumulator.Recover(); err != nil {
+					panic(err)
+				}
+			}
 			fmt.Println("Initial Acc Height:", o.accumulator.Height())
 		}
 	}
@@ -109,6 +114,12 @@ func (o *receiver) Start(status *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, 
 		headCh := make(chan *types.Header)
 		o.client.WatchHeader(context.Background(), big.NewInt(1+finnum.Int64()), headCh)
 		go func() {
+			vs := &VerifierStatus{}
+			if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
+				return nil, err
+			}
+			tree := vs.BlockTree
+
 			var snap *Snapshot
 			for {
 				select {
@@ -130,7 +141,10 @@ func (o *receiver) Start(status *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, 
 							}
 						}
 					}
+
 					o.heads.Enqueue(head)
+					tree.Add(snap.ParentHash, snap.Hash)
+					//if confirmations, err := o.confirm(snap.Hash, tree.Root())
 				}
 			}
 		}()
@@ -203,6 +217,7 @@ func (o *receiver) GetHeightForSeq(sequence int64) int64 {
 }
 
 func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]link.BlockUpdate, error) {
+	fmt.Println("BuildBlockUpdate")
 	vs := &VerifierStatus{}
 	if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
 		return nil, err
@@ -294,6 +309,7 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 }
 
 func (o *receiver) BuildBlockProof(status *btp.BMCLinkStatus, height int64) (link.BlockProof, error) {
+	fmt.Println("BuildBlockProof")
 	for o.accumulator.Height() < status.Verifier.Height+1 {
 		head, _ := o.heads.Dequeue().(*types.Header)
 		if head.Number.Int64() != o.accumulator.Height() {
@@ -321,6 +337,7 @@ func (o *receiver) BuildBlockProof(status *btp.BMCLinkStatus, height int64) (lin
 }
 
 func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (link.MessageProof, error) {
+	fmt.Println("BuildMessageProof")
 	vs := &VerifierStatus{}
 	if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
 		return nil, err
@@ -516,13 +533,8 @@ func (o *receiver) synchronize(until *big.Int) error {
 			return err
 		}
 
-		if o.accumulator.Height() != int64(snap.Number+1) {
-			panic("")
-		}
-
-		o.accumulator.AddHash(snap.Hash.Bytes())
-		if err := o.accumulator.Flush(); err != nil {
-			return err
+		if o.accumulator.Height() == int64(snap.Number+1) {
+			o.accumulator.AddHash(snap.Hash.Bytes())
 		}
 
 		o.snapshots.Add(snap.Hash, snap)
@@ -531,6 +543,9 @@ func (o *receiver) synchronize(until *big.Int) error {
 				return err
 			}
 		}
+	}
+	if err := o.accumulator.Flush(); err != nil {
+		return err
 	}
 	return nil
 }
