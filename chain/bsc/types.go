@@ -7,8 +7,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/icon-project/btp/common/link"
-	btp "github.com/icon-project/btp/common/types"
+	"github.com/icon-project/btp2/common/link"
+	btp "github.com/icon-project/btp2/common/types"
 )
 
 type BSCRelayMessage struct {
@@ -21,17 +21,17 @@ type BSCTypePrefixedMessage struct {
 }
 
 // Implement BlockUpdate
-type BSCBlockUpdate struct {
+type BlockUpdate struct {
 	heads  []*types.Header
 	height uint64
 	status *VerifierStatus
 }
 
-func (o BSCBlockUpdate) Type() link.MessageItemType {
+func (o BlockUpdate) Type() link.MessageItemType {
 	return link.TypeBlockUpdate
 }
 
-func (o BSCBlockUpdate) Len() int64 {
+func (o BlockUpdate) Len() int64 {
 	size := int64(0)
 	for _, head := range o.heads {
 		size += int64(math.Ceil(float64(head.Size())))
@@ -39,7 +39,7 @@ func (o BSCBlockUpdate) Len() int64 {
 	return size
 }
 
-func (o BSCBlockUpdate) UpdateBMCLinkStatus(status *btp.BMCLinkStatus) error {
+func (o BlockUpdate) UpdateBMCLinkStatus(status *btp.BMCLinkStatus) error {
 	blob, err := rlp.EncodeToBytes(o.status)
 	if err != nil {
 		return err
@@ -49,11 +49,11 @@ func (o BSCBlockUpdate) UpdateBMCLinkStatus(status *btp.BMCLinkStatus) error {
 	return nil
 }
 
-func (o BSCBlockUpdate) ProofHeight() int64 {
+func (o BlockUpdate) ProofHeight() int64 {
 	return 0
 }
 
-func (o BSCBlockUpdate) SrcHeight() int64 {
+func (o BlockUpdate) SrcHeight() int64 {
 	if len(o.heads) <= 0 {
 		return -1
 	} else {
@@ -61,7 +61,7 @@ func (o BSCBlockUpdate) SrcHeight() int64 {
 	}
 }
 
-func (o BSCBlockUpdate) TargetHeight() int64 {
+func (o BlockUpdate) TargetHeight() int64 {
 	if len(o.heads) <= 0 {
 		return -1
 	} else {
@@ -69,7 +69,7 @@ func (o BSCBlockUpdate) TargetHeight() int64 {
 	}
 }
 
-func (o BSCBlockUpdate) EncodeRLP(w io.Writer) error {
+func (o BlockUpdate) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, o.heads)
 }
 

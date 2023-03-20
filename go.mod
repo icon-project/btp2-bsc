@@ -1,8 +1,8 @@
-module github.com/icon-project/btp/bsc
+module github.com/icon-project/btp2/bsc
 
 replace (
 	github.com/ethereum/go-ethereum => github.com/bnb-chain/bsc v1.1.18
-	//github.com/icon-project/btp => /Users/cornery/workspace/github/btp2.git
+	github.com/icon-project/btp2 => /Users/cornery/workspace/github/btp2.git
 	github.com/tendermint/tendermint => github.com/bnb-chain/tendermint v0.31.12
 )
 
@@ -11,9 +11,15 @@ go 1.17
 require (
 	github.com/ethereum/go-ethereum v1.10.5
 	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d
-	github.com/icon-project/btp v0.0.0-20230302061923-57e466fc6308
+	//github.com/icon-project/btp v0.0.0-20230302061923-57e466fc6308
+	// github.com/icon-project/btp v0.0.0-20230307085542-82e463e69797
 	github.com/spf13/cobra v1.1.1
 	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519
+)
+
+require (
+	github.com/icon-project/btp v0.0.0-20230307085542-82e463e69797
+	github.com/icon-project/btp2 v0.0.0-20230315065508-126354803af1
 )
 
 require (

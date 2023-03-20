@@ -13,7 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/icon-project/btp/common/db"
+	"github.com/icon-project/btp2/common/db"
 	"golang.org/x/crypto/sha3"
 )
 

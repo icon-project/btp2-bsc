@@ -4,22 +4,20 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
-	"math/big"
-	"sync"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
-	lru "github.com/hashicorp/golang-lru"
-	"github.com/icon-project/btp/common/db"
-	"github.com/icon-project/btp/common/link"
-	"github.com/icon-project/btp/common/log"
-	"github.com/icon-project/btp/common/mta"
-	btp "github.com/icon-project/btp/common/types"
+	"github.com/icon-project/btp2/common/db"
+	"github.com/icon-project/btp2/common/link"
+	"github.com/icon-project/btp2/common/log"
+	"github.com/icon-project/btp2/common/mta"
+	btp "github.com/icon-project/btp2/common/types"
+	"math"
+	"math/big"
+	"sync"
 )
 
 const (
@@ -53,12 +51,13 @@ type receiver struct {
 	accumulator *mta.ExtAccumulator
 	cancel      context.CancelFunc
 	database    db.Database
-	snapshots   *lru.ARCCache
-	heads       *WaitQueue
-	msgs        *WaitQueue
-	mutex       sync.Mutex
-	status      *srcStatus
-	log         log.Logger
+	snapshots   *Snapshots
+	//snapshots   *lru.ARCCache
+	heads  *WaitQueue
+	msgs   *WaitQueue
+	mutex  sync.Mutex
+	status *srcStatus
+	log    log.Logger
 }
 
 func NewReceiver(config Config, log log.Logger) *receiver {
@@ -73,11 +72,11 @@ func NewReceiver(config Config, log log.Logger) *receiver {
 		log:     log,
 	}
 
-	if snaps, err := lru.NewARC(CacheSize); err != nil {
-		panic(err)
-	} else {
-		o.snapshots = snaps
-	}
+	// if snaps, err := lru.NewARC(CacheSize); err != nil {
+	// 	panic(err)
+	// } else {
+	// 	o.snapshots = snaps
+	// }
 
 	if database, err := db.Open(config.DBPath, string(db.GoLevelDBBackend), "receiver"); err != nil {
 		panic(err)
@@ -95,102 +94,106 @@ func NewReceiver(config Config, log log.Logger) *receiver {
 			fmt.Println("Initial Acc Height:", o.accumulator.Height())
 		}
 	}
+	o.snapshots = newSnapshots(o.chainId, o.client.Client, CacheSize, o.database)
 	return o
 }
 
+type BSCFeed struct {
+	hash     common.Hash
+	number   uint64
+	sequence *big.Int
+}
+
+func (o *BSCFeed) ID() common.Hash {
+	return o.hash
+}
+
+func (o *BSCFeed) Number() uint64 {
+	return o.number
+}
+
+func (o *BSCFeed) Sequence() *big.Int {
+	return o.sequence
+}
+
 func (o *receiver) Start(status *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, error) {
-	outCh := make(chan link.ReceiveStatus)
-	linkCh := make(chan *TypesLinkStats)
-	finnum := big.NewInt(status.Verifier.Height)
+	och := make(chan link.ReceiveStatus)
+	o.status = &srcStatus{
+		height:   status.Verifier.Height,
+		sequence: status.RxSeq,
+	}
 	go func() {
+		// ensure initial mta & snapshot
 		if err := o.prepare(); err != nil {
 			panic(err)
 		}
 
-		if err := o.synchronize(finnum); err != nil {
+		// sync mta & snapshots based on peer status
+		fn := big.NewInt(status.Verifier.Height)
+		if err := o.synchronize(fn); err != nil {
 			panic(err)
 		}
 
-		headCh := make(chan *types.Header)
-		o.client.WatchHeader(context.Background(), big.NewInt(1+finnum.Int64()), headCh)
-		go func() {
-			vs := &VerifierStatus{}
-			if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
-				return nil, err
-			}
-			tree := vs.BlockTree
+		// TODO implements
+		// TODO too many missing messages (case exceeding buffer capability)
+		// collect missing messages
 
-			var snap *Snapshot
-			for {
-				select {
-				case head := <-headCh:
-					var err error
-					if snap == nil {
-						snap, err = o.snapshot(head.ParentHash)
-						if err != nil {
-							panic(err)
-						}
-					}
-					if snap, err = snap.apply(head, o.chainId); err != nil {
-						panic(err)
-					} else {
-						o.snapshots.Add(snap.Hash, snap)
-						if snap.Number%CheckpointInterval == 0 {
-							if snap.store(o.database); err != nil {
-								panic(err)
-							}
-						}
-					}
-
-					o.heads.Enqueue(head)
-					tree.Add(snap.ParentHash, snap.Hash)
-					//if confirmations, err := o.confirm(snap.Hash, tree.Root())
-				}
-			}
-		}()
-
-		sequence := big.NewInt(status.RxSeq)
-		msgCh := make(chan *BTPMessageCenterMessage)
-		fromBlock := o.start
-		if sequence.Uint64() > 0 {
-			end := finnum.Uint64()
-			if prevmsg, err := o.client.FindMessage(context.Background(), o.start, &end, sequence); err != nil {
-				panic(err)
-			} else {
-				fromBlock = prevmsg.Raw.BlockNumber
-			}
-		}
-
-		ctx := context.Background()
-		next := big.NewInt(sequence.Int64() + 1)
-		if err := o.client.WatchMessage(ctx, fromBlock, next, msgCh); err != nil {
+		// watch new head & messages
+		vs := &VerifierStatus{}
+		if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
 			panic(err)
 		}
-		go func() {
-			for {
-				select {
-				case msg := <-msgCh:
-					o.msgs.Enqueue(msg)
-				case <-ctx.Done():
-					fmt.Println("TODO:)", ctx.Err())
-					return
-				}
-			}
-		}()
+		snap, err := o.snapshots.get(vs.BlockTree.Root())
+		if err != nil {
+			panic(err)
+		}
 
-		o.client.WatchStatus(context.Background(), linkCh)
+		fch := make(chan *BTPData)
+		finalizer := newBlockFinalizer(big.NewInt(int64(o.epoch)), snap, o.snapshots)
+		o.client.WatchBTPData(context.Background(), fn.Add(fn, big.NewInt(1)), fch)
 		for {
 			select {
-			case newStatus := <-linkCh:
-				o.mutex.Lock()
-				o.status.height = newStatus.Verifier.Height.Int64()
-				o.status.sequence = newStatus.TxSeq.Int64()
-				outCh <- o.status
-				o.mutex.Unlock()
+			case data := <-fch:
+				var err error
+				// records block snapshot
+				if snap, err = snap.apply(data.header, o.chainId); err != nil {
+					panic(err)
+				}
+				if err = o.snapshots.add(snap); err != nil {
+					panic(err)
+				}
+
+				feed := &BSCFeed{
+					hash:     snap.Hash,
+					number:   snap.Number,
+					sequence: nil,
+				}
+				if len(data.messages) > 0 {
+					feed.sequence = data.messages[len(data.messages)-1].Sequence
+				}
+				if fins, err := finalizer.feed(feed); err != nil {
+					panic(err)
+				} else if len(fins) > 0 {
+					o.mutex.Lock()
+					o.status.height = int64(fins[len(fins)-1].(*BSCFeed).number)
+					for _, c := range fins {
+						f := c.(*BSCFeed)
+						if f.sequence != nil {
+							o.status.sequence = f.sequence.Int64()
+							break
+						}
+					}
+					och <- o.status
+					o.mutex.Unlock()
+				}
+				o.heads.Enqueue(data.header)
+				for _, m := range data.messages {
+					o.msgs.Enqueue(m)
+				}
 			}
 		}
 	}()
-	return outCh, nil
+	return och, nil
 }
 
 func (o *receiver) Stop() {
@@ -201,6 +204,9 @@ func (o *receiver) Stop() {
 func (o *receiver) GetStatus() (link.ReceiveStatus, error) {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
+	if o.status == nil {
+		panic("NotReady")
+	}
 	return o.status, nil
 }
 
@@ -211,29 +217,31 @@ func (o *receiver) GetMarginForLimit() int64 {
 func (o *receiver) GetHeightForSeq(sequence int64) int64 {
 	msg, err := o.client.FindMessage(context.Background(), o.start, nil, big.NewInt(sequence))
 	if err != nil {
-		return -1
+		return 0
 	}
 	return int64(msg.Raw.BlockNumber)
 }
 
 func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]link.BlockUpdate, error) {
-	fmt.Println("BuildBlockUpdate")
+	fmt.Println("BuildBlockUpdate Height=", status.Verifier.Height, " RxSeq=", status.RxSeq)
 	vs := &VerifierStatus{}
 	if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
 		return nil, err
 	}
-
 	number := status.Verifier.Height
 	tree := vs.BlockTree
 	heads := make([]*types.Header, 0)
-	var confirmations []common.Hash
-	// exit loop
-	// 1) `block updates` size exceeds limited size
-	// 2) `btp message` exists
+	var fins []common.Hash
+
 	for o.heads.Len() > 0 {
+		//for {
+		//	if o.heads.Len() <= 0 {
+		//		time.Sleep(time.Second)
+		//		continue
+		//	}
 		head, _ := o.heads.First().(*types.Header)
 
-		// block already finalized by verifier
+		// drop already finalized blocks
 		if head.Number.Int64() <= number {
 			o.accumulator.AddHash(head.Hash().Bytes())
 			if err := o.accumulator.Flush(); err != nil {
@@ -243,38 +251,45 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 			continue
 		}
 
-		// block already known to verifier
+		// drop blocks already known to verifier
 		if tree.Has(head.Hash()) {
 			o.heads.Dequeue()
 			continue
 		}
 
+		// check block consistency
 		if !tree.Has(head.ParentHash) {
 			panic(fmt.Sprintf("inconsistent block tree: %s", head.ParentHash))
 		}
 
+		// check doesn't exceed size of allowed block update
 		size := int64(math.Ceil(float64(head.Size())))
 		if limit < size {
 			break
+		} else {
+			limit -= size
 		}
 
+		// consume collected head
 		o.heads.Dequeue()
 		heads = append(heads, head)
+
+		// update estimated status
 		if err := tree.Add(head.ParentHash, head.Hash()); err != nil {
 			panic(fmt.Sprintf("Fail to append block hash: parent: %v, hash: %v cause: %s\n",
 				head.ParentHash, head.Hash(), err.Error()))
 		}
-		limit -= size
 
 		var err error
-		if confirmations, err = o.confirm(head.Hash(), tree.Root()); err != nil {
+		// TODO improve
+		if fins, err = finalize(o.epoch, o.snapshots, head.Hash(), tree.Root()); err != nil {
 			return nil, err
 		} else {
-			if len(confirmations) > 0 && o.msgs.Len() > 0 {
+			if len(fins) > 0 && o.msgs.Len() > 0 {
 				msg, _ := o.msgs.First().(*BTPMessageCenterMessage)
 				// TODO improve duplicated bytes comparison
-				for _, confirmation := range confirmations {
-					if bytes.Equal(msg.Raw.BlockHash.Bytes(), confirmation.Bytes()) {
+				for _, fin := range fins {
+					if bytes.Equal(msg.Raw.BlockHash.Bytes(), fin.Bytes()) {
 						break
 					}
 				}
@@ -282,9 +297,9 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 		}
 	}
 
-	if len(confirmations) > 0 {
-		tree.Prune(confirmations[0])
-		for _, cnf := range confirmations {
+	if len(fins) > 0 {
+		tree.Prune(fins[0])
+		for _, cnf := range fins {
 			o.accumulator.AddHash(cnf.Bytes())
 			if err := o.accumulator.Flush(); err != nil {
 				return nil, err
@@ -294,9 +309,9 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 
 	if len(heads) > 0 {
 		return []link.BlockUpdate{
-			BSCBlockUpdate{
+			BlockUpdate{
 				heads:  heads,
-				height: uint64(status.Verifier.Height + int64(len(confirmations))),
+				height: uint64(status.Verifier.Height + int64(len(fins))),
 				status: &VerifierStatus{
 					Offset:    uint64(o.accumulator.Offset()),
 					BlockTree: tree,
@@ -306,10 +321,103 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 	} else {
 		return []link.BlockUpdate{}, nil
 	}
+
 }
 
+// func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]link.BlockUpdate, error) {
+// 	fmt.Println("BuildBlockUpdate")
+// 	vs := &VerifierStatus{}
+// 	if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
+// 		return nil, err
+// 	}
+//
+// 	number := status.Verifier.Height
+// 	tree := vs.BlockTree
+// 	heads := make([]*types.Header, 0)
+// 	var confirmations []common.Hash
+// 	// exit loop
+// 	// 1) `block updates` size exceeds limited size
+// 	// 2) `btp message` exists
+// 	for o.heads.Len() > 0 {
+// 		head, _ := o.heads.First().(*types.Header)
+//
+// 		// block already finalized by verifier
+// 		if head.Number.Int64() <= number {
+// 			o.accumulator.AddHash(head.Hash().Bytes())
+// 			if err := o.accumulator.Flush(); err != nil {
+// 				return nil, err
+// 			}
+// 			o.heads.Dequeue()
+// 			continue
+// 		}
+//
+// 		// block already known to verifier
+// 		if tree.Has(head.Hash()) {
+// 			o.heads.Dequeue()
+// 			continue
+// 		}
+//
+// 		if !tree.Has(head.ParentHash) {
+// 			panic(fmt.Sprintf("inconsistent block tree: %s", head.ParentHash))
+// 		}
+//
+// 		size := int64(math.Ceil(float64(head.Size())))
+// 		if limit < size {
+// 			break
+// 		}
+//
+// 		o.heads.Dequeue()
+// 		heads = append(heads, head)
+// 		if err := tree.Add(head.ParentHash, head.Hash()); err != nil {
+// 			panic(fmt.Sprintf("Fail to append block hash: parent: %v, hash: %v cause: %s\n",
+// 				head.ParentHash, head.Hash(), err.Error()))
+// 		}
+// 		limit -= size
+//
+// 		var err error
+// 		if confirmations, err = o.confirm(head.Hash(), tree.Root()); err != nil {
+// 			return nil, err
+// 		} else {
+// 			if len(confirmations) > 0 && o.msgs.Len() > 0 {
+// 				msg, _ := o.msgs.First().(*BTPMessageCenterMessage)
+// 				// TODO improve duplicated bytes comparison
+// 				for _, confirmation := range confirmations {
+// 					if bytes.Equal(msg.Raw.BlockHash.Bytes(), confirmation.Bytes()) {
+// 						break
+// 					}
+// 				}
+// 			}
+// 		}
+// 	}
+//
+// 	if len(confirmations) > 0 {
+// 		tree.Prune(confirmations[0])
+// 		for _, cnf := range confirmations {
+// 			o.accumulator.AddHash(cnf.Bytes())
+// 			if err := o.accumulator.Flush(); err != nil {
+// 				return nil, err
+// 			}
+// 		}
+// 	}
+//
+// 	if len(heads) > 0 {
+// 		return []link.BlockUpdate{
+// 			BSCBlockUpdate{
+// 				heads:  heads,
+// 				height: uint64(status.Verifier.Height + int64(len(confirmations))),
+// 				status: &VerifierStatus{
+// 					Offset:    uint64(o.accumulator.Offset()),
+// 					BlockTree: tree,
+// 				},
+// 			},
+// 		}, nil
+// 	} else {
+// 		return []link.BlockUpdate{}, nil
+// 	}
+// }
+
 func (o *receiver) BuildBlockProof(status *btp.BMCLinkStatus, height int64) (link.BlockProof, error) {
-	fmt.Println("BuildBlockProof")
+	fmt.Println("BuildBlockProof Height=", status.Verifier.Height, "RxSeq=", status.RxSeq)
 	for o.accumulator.Height() < status.Verifier.Height+1 {
 		head, _ := o.heads.Dequeue().(*types.Header)
 		if head.Number.Int64() != o.accumulator.Height() {
@@ -337,7 +445,7 @@ func (o *receiver) BuildBlockProof(status *btp.BMCLinkStatus, height int64) (lin
 }
 
 func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (link.MessageProof, error) {
-	fmt.Println("BuildMessageProof")
+	fmt.Println("BuildMessageProof Height=", status.Verifier.Height, "RxSeq=", status.RxSeq)
 	vs := &VerifierStatus{}
 	if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
 		return nil, err
@@ -415,6 +523,7 @@ func (o *receiver) BuildRelayMessage(parts []link.RelayMessageItem) ([]byte, err
 			return nil, err
 		}
 
+		fmt.Println("parts:", len(parts), " type:", typeToUint(part.Type()))
 		msg.TypePrefixedMessages = append(msg.TypePrefixedMessages, BSCTypePrefixedMessage{
 			Type:    typeToUint(part.Type()),
 			Payload: blob,
@@ -427,6 +536,9 @@ func (o *receiver) BuildRelayMessage(parts []link.RelayMessageItem) ([]byte, err
 	}
 
 	return blob, err
+}
+
+func (o *receiver) FinalizedStatus(bls <-chan *btp.BMCLinkStatus) {
 }
 
 // ensure initial merkle accumulator and snapshot
@@ -496,53 +608,35 @@ func (o *receiver) prepare() error {
 	return nil
 }
 
-// synchronize `merkle accumulator` and `snapshot` to state of `until` block
 func (o *receiver) synchronize(until *big.Int) error {
 	// synchronize up to `target` block
 	target, err := o.client.HeaderByNumber(context.Background(), until)
 	if err != nil {
 		return err
 	}
-
 	hash := target.Hash()
-	heads := make([]*types.Header, 0)
-	for {
-		ok, err := hasSnapshot(o.database, hash)
-		if err != nil {
-			return err
-		} else if ok {
-			break
-		}
 
-		if head, err := o.client.HeaderByHash(context.Background(), hash); err != nil {
-			return err
-		} else {
-			hash = head.ParentHash
-			heads = append(heads, head)
-		}
+	// synchronize snapshots
+	if err := o.snapshots.ensure(hash); err != nil {
+		return err
 	}
 
-	snap, err := loadSnapshot(o.database, hash)
+	snap, err := o.snapshots.get(hash)
 	if err != nil {
 		return err
 	}
 
-	for i := len(heads) - 1; i >= 0; i-- {
-		snap, err = snap.apply(heads[i], o.chainId)
+	// synchronize accumulator
+	hashes := make([]common.Hash, 0)
+	for o.accumulator.Height() <= int64(snap.Number) {
+		hashes = append(hashes, snap.Hash)
+		snap, err = o.snapshots.get(snap.ParentHash)
 		if err != nil {
 			return err
 		}
-
-		if o.accumulator.Height() == int64(snap.Number+1) {
-			o.accumulator.AddHash(snap.Hash.Bytes())
-		}
-
-		o.snapshots.Add(snap.Hash, snap)
-		if snap.Number%CheckpointInterval == 0 {
-			if snap.store(o.database); err != nil {
-				return err
-			}
-		}
+	}
+	for i := range hashes {
+		o.accumulator.AddHash(hashes[len(hashes)-1-i].Bytes())
 	}
 	if err := o.accumulator.Flush(); err != nil {
 		return err
@@ -550,59 +644,113 @@ func (o *receiver) synchronize(until *big.Int) error {
 	return nil
 }
 
-func (o *receiver) snapshot(hash common.Hash) (*Snapshot, error) {
-	// TODO consider to using network sync
-	if snap, ok := o.snapshots.Get(hash); ok {
-		return snap.(*Snapshot), nil
-	}
-	snap, err := loadSnapshot(o.database, hash)
-	if err != nil {
-		return nil, err
-	}
-	return snap, nil
-}
+// synchronize `merkle accumulator` and `snapshot` to state of `until` block
+//func (o *receiver) synchronize(until *big.Int) error {
+//	// synchronize up to `target` block
+//	target, err := o.client.HeaderByNumber(context.Background(), until)
+//	if err != nil {
+//		return err
+//	}
+//
+//	hash := target.Hash()
+//	heads := make([]*types.Header, 0)
+//	for {
+//		ok, err := hasSnapshot(o.database, hash)
+//		if err != nil {
+//			return err
+//		} else if ok {
+//			break
+//		}
+//
+//		if head, err := o.client.HeaderByHash(context.Background(), hash); err != nil {
+//			return err
+//		} else {
+//			hash = head.ParentHash
+//			heads = append(heads, head)
+//		}
+//	}
+//
+//	snap, err := loadSnapshot(o.database, hash)
+//	if err != nil {
+//		return err
+//	}
+//
+//	for i := len(heads) - 1; i >= 0; i-- {
+//		snap, err = snap.apply(heads[i], o.chainId)
+//		if err != nil {
+//			return err
+//		}
+//
+//		if o.accumulator.Height() == int64(snap.Number+1) {
+//			o.accumulator.AddHash(snap.Hash.Bytes())
+//		}
+//
+//		o.snapshots.Add(snap.Hash, snap)
+//		if snap.Number%CheckpointInterval == 0 {
+//			if snap.store(o.database); err != nil {
+//				return err
+//			}
+//		}
+//	}
+//	if err := o.accumulator.Flush(); err != nil {
+//		return err
+//	}
+//	return nil
+//}
 
-func (o *receiver) confirm(from, until common.Hash) ([]common.Hash, error) {
-	// TODO test clone attacks
-	snap, err := o.snapshot(from)
-	if err != nil {
-		return nil, err
-	}
+//func (o *receiver) snapshot(hash common.Hash) (*Snapshot, error) {
+//	// TODO consider to using network sync
+//	if snap, ok := o.snapshots.Get(hash); ok {
+//		return snap.(*Snapshot), nil
+//	}
+//	snap, err := loadSnapshot(o.database, hash)
+//	if err != nil {
+//		return nil, err
+//	}
+//	return snap, nil
+//}
 
-	cnfs := make([]common.Hash, 0)
-	signers := make(map[common.Address]struct{})
-	// TODO extract duplicates
-	for !bytes.Equal(snap.Hash.Bytes(), until.Bytes()) {
-		signers[snap.Sealer] = struct{}{}
-		if snap.Number%o.epoch == 0 {
-			nsigners := 0
-			for k, _ := range snap.Candidates {
-				if _, ok := signers[k]; ok {
-					nsigners++
-				}
-			}
-			if len(signers) > len(snap.Validators)/2 && nsigners > len(snap.Candidates)*2/3 {
-				cnfs = append(cnfs, snap.Hash)
-			} else {
-				cnfs = cnfs[:0]
-			}
-		} else if len(cnfs) > 0 {
-			cnfs = append(cnfs, snap.Hash)
-		} else {
-			nsigners := 0
-			for k, _ := range snap.Candidates {
-				if _, ok := signers[k]; ok {
-					nsigners++
-				}
-			}
-			if nsigners > len(snap.Candidates)*2/3 {
-				cnfs = append(cnfs, snap.Hash)
-			}
-		}
-		snap, _ = o.snapshot(snap.ParentHash)
-	}
-	return cnfs, nil
-}
+//func (o *receiver) confirm(from, until common.Hash) ([]common.Hash, error) {
+//	// TODO test clone attacks
+//	snap, err := o.snapshot(from)
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	cnfs := make([]common.Hash, 0)
+//	signers := make(map[common.Address]struct{})
+//	// TODO extract duplicates
+//	for !bytes.Equal(snap.Hash.Bytes(), until.Bytes()) {
+//		signers[snap.Sealer] = struct{}{}
+//		if snap.Number%o.epoch == 0 {
+//			nsigners := 0
+//			for k, _ := range snap.Candidates {
+//				if _, ok := signers[k]; ok {
+//					nsigners++
+//				}
+//			}
+//			if len(signers) > len(snap.Validators)/2 && nsigners > len(snap.Candidates)*2/3 {
+//				cnfs = append(cnfs, snap.Hash)
+//			} else {
+//				cnfs = cnfs[:0]
+//			}
+//		} else if len(cnfs) > 0 {
+//			cnfs = append(cnfs, snap.Hash)
+//		} else {
+//			nsigners := 0
+//			for k, _ := range snap.Candidates {
+//				if _, ok := signers[k]; ok {
+//					nsigners++
+//				}
+//			}
+//			if nsigners > len(snap.Candidates)*2/3 {
+//				cnfs = append(cnfs, snap.Hash)
+//			}
+//		}
+//		snap, _ = o.snapshot(snap.ParentHash)
+//	}
+//	return cnfs, nil
+//}
 
 // TODO Add `ToInt()` to `link.MessageItemType`
 func typeToUint(_type link.MessageItemType) uint {
