@@ -92,14 +92,9 @@ deploy-all: deploy-bmc deploy-bmv deploy-xcall deploy-dapp
 build-bsc:
 	@ echo ">>> Build bsc-geth" ; \
 	cd docker/bsc; \
-	make build-simple
+	make build-simple && make bootstrap-simple
 
-bootstrap-bsc: build-bsc
-	@ echo ">>> Bootstrap bsc-geth" ; \
-	cd docker/bsc; \
-	make bootstrap-simple
-
-start-bsc:
+start-bsc: build-bsc
 	@ echo ">>> Start bsc-geth" ; \
 	cd docker/bsc; \
 	make start-simple
@@ -122,7 +117,10 @@ reset-bsc:
 stop-nodes: stop-bsc reset-bsc
 	@ echo ">>> Stop nodes" ; \
 	cd docker; \
-	docker compose down
+	docker compose down; \
+	cd icon; \
+	rm -rf logs/*; \
+	rm -rf data/*;
 
 setup-node:
 	@ echo ">>> Setup ICON node" ; \
