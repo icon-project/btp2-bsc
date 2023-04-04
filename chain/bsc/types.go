@@ -27,6 +27,10 @@ type BlockUpdate struct {
 	status *VerifierStatus
 }
 
+func (o BlockUpdate) Headers() []*types.Header {
+	return o.heads
+}
+
 func (o BlockUpdate) Type() link.MessageItemType {
 	return link.TypeBlockUpdate
 }
@@ -73,6 +77,21 @@ func (o BlockUpdate) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, o.heads)
 }
 
+type extbu struct {
+	Headers []*types.Header
+}
+
+func (o BlockUpdate) DecodeRLP(s *rlp.Stream) error {
+	bu := &extbu{}
+	if blob, err := s.Bytes(); err != nil {
+		return err
+	} else {
+		rlp.DecodeBytes(blob, bu)
+	}
+	o.heads = bu.Headers
+	return nil
+}
+
 // Implement BlockProof
 type BSCBlockProof struct {
 	Header    *types.Header
@@ -98,8 +117,9 @@ func (o BSCBlockProof) ProofHeight() int64 {
 
 // Implement MessageProof
 type BSCMessageProof struct {
-	Hash   common.Hash
-	Proofs []BSCReceiptProof
+	Hash     common.Hash
+	Proofs   []BSCReceiptProof
+	sequence uint64
 }
 
 func (o BSCMessageProof) Type() link.MessageItemType {
@@ -107,7 +127,13 @@ func (o BSCMessageProof) Type() link.MessageItemType {
 }
 
 func (o BSCMessageProof) Len() int64 {
-	return 0
+	size := int64(0)
+	for _, rp := range o.Proofs {
+		for _, part := range rp.Proof {
+			size += int64(len(part))
+		}
+	}
+	return size
 }
 
 func (o BSCMessageProof) UpdateBMCLinkStatus(status *btp.BMCLinkStatus) error {
@@ -116,11 +142,11 @@ func (o BSCMessageProof) UpdateBMCLinkStatus(status *btp.BMCLinkStatus) error {
 }
 
 func (o BSCMessageProof) StartSeqNum() int64 {
-	return 0
+	return int64(o.sequence)
 }
 
 func (o BSCMessageProof) LastSeqNum() int64 {
-	return 0
+	return int64(o.sequence + uint64(len(o.Proofs)) - 1)
 }
 
 type BSCReceiptProof struct {

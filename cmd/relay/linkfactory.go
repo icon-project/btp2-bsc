@@ -1,18 +1,17 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"path"
 
-	"github.com/icon-project/btp/bsc/chain/bsc"
-	"github.com/icon-project/btp/chain"
-	"github.com/icon-project/btp/chain/ethbr"
-	"github.com/icon-project/btp/chain/icon"
-	"github.com/icon-project/btp/common/link"
-	"github.com/icon-project/btp/common/log"
-	"github.com/icon-project/btp/common/types"
-	"github.com/icon-project/btp/common/wallet"
+	"github.com/icon-project/btp2/bsc/chain/bsc"
+	"github.com/icon-project/btp2/chain"
+	"github.com/icon-project/btp2/chain/ethbr"
+	"github.com/icon-project/btp2/chain/icon"
+	"github.com/icon-project/btp2/common/link"
+	"github.com/icon-project/btp2/common/log"
+	"github.com/icon-project/btp2/common/types"
+	"github.com/icon-project/btp2/common/wallet"
 )
 
 func NewLink(cfg *Config, srcWallet wallet.Wallet, dstWallet wallet.Wallet, modLevels map[string]string) error {
@@ -105,18 +104,22 @@ func newReceiver(s string, cfg chain.Config, l log.Logger) link.Receiver {
 	switch s {
 	case BSC, HARDHAT:
 		bsccfg := bsc.Config{
-			SrcAddress: cfg.Src.Address,
-			DstAddress: cfg.Dst.Address,
-			Endpoint:   cfg.Src.Endpoint,
+			ChainID:     int(99),
+			Epoch:       int(200),
+			StartNumber: int(200),
+			SrcAddress:  cfg.Src.Address,
+			DstAddress:  cfg.Dst.Address,
+			Endpoint:    cfg.Src.Endpoint,
+			DBType:      "leveldb",
 		}
-		fmt.Println("options:", cfg.Src.Options)
-		if jd, err := json.Marshal(cfg.Src.Options); err != nil {
-			panic(err)
-		} else {
-			if err := json.Unmarshal(jd, &bsccfg); err != nil {
-				panic(err)
-			}
-		}
+		// if jd, err := json.Marshal(cfg.Src.Options); err != nil {
+		// 	panic(err)
+		// } else {
+		// 	fmt.Println("jd:", hex.EncodeToString(jd))
+		// 	if err := json.Unmarshal(jd, &bsccfg); err != nil {
+		// 		panic(err)
+		// 	}
+		// }
 		fmt.Printf("cfg:%+v\n", bsccfg)
 		receiver = bsc.NewReceiver(bsccfg, l)
 	default:

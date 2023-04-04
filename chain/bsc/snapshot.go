@@ -76,10 +76,36 @@ func newSnapshot(
 	return snap
 }
 
+func (s *Snapshot) String() string {
+	var b bytes.Buffer
+	b.WriteString("Snapshot{")
+	b.WriteString(fmt.Sprintf("Number: %d ", s.Number))
+	b.WriteString(fmt.Sprintf("Hash: %s ", s.Hash.Hex()))
+	b.WriteString(fmt.Sprintf("ParentHash: %s ", s.ParentHash.Hex()))
+	b.WriteString("Validators: [ ")
+	for k, _ := range s.Validators {
+		b.WriteString(fmt.Sprintf(" %s ", k.Hex()))
+	}
+	b.WriteString(" ] ")
+
+	b.WriteString("Candidates: [")
+	for k, _ := range s.Candidates {
+		b.WriteString(fmt.Sprintf(" %s", k.Hex()))
+	}
+	b.WriteString(" ] ")
+
+	b.WriteString("Recents: [")
+	for k, v := range s.Recents {
+		b.WriteString(fmt.Sprintf(" {%d %s}", k, v.Hex()))
+	}
+	b.WriteString(" ] ")
+	b.WriteString(fmt.Sprintf("Sealer: %s ", s.Sealer.Hex()))
+	b.WriteString("}")
+	return b.String()
+}
+
 // store inserts the snapshot into the database.
 func (s *Snapshot) store(database db.Database) error {
-	fmt.Println("++Snapshot::store")
-	defer fmt.Println("--Snapshot::store", s.Number, s.Hash)
 	if bucket, err := database.GetBucket("Snapshot"); err != nil {
 		return err
 	} else {
@@ -93,6 +119,9 @@ func (s *Snapshot) store(database db.Database) error {
 
 // loadSnapshot loads an existing snapshot from the database.
 func loadSnapshot(database db.Database, hash common.Hash) (*Snapshot, error) {
+	if database == nil {
+		return nil, errors.New("NoDatabase")
+	}
 	if bucket, err := database.GetBucket("Snapshot"); err != nil {
 		return nil, err
 	} else {
@@ -109,6 +138,9 @@ func loadSnapshot(database db.Database, hash common.Hash) (*Snapshot, error) {
 }
 
 func hasSnapshot(database db.Database, hash common.Hash) (bool, error) {
+	if database == nil {
+		return false, nil
+	}
 	if bucket, err := database.GetBucket("Snapshot"); err != nil {
 		return false, err
 	} else {

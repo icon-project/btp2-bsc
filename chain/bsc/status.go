@@ -70,11 +70,11 @@ func NewBlockTree(id common.Hash) *BlockTree {
 	}
 }
 
-func (t *BlockTree) String() string {
+func (o *BlockTree) String() string {
 	buf := &bytes.Buffer{}
-	buf.WriteString(fmt.Sprintf("{\"Root\": \"%s\",", t.root))
+	buf.WriteString(fmt.Sprintf("{\"Root\": \"%s\",", o.root))
 	buf.WriteString("\"Nodes\": [")
-	for k, v := range t.nodes {
+	for k, v := range o.nodes {
 		buf.WriteString(fmt.Sprintf("{\"ID\": \"%s\",", k))
 		buf.WriteString("\"Children\": [")
 		for i, e := range v {
@@ -91,28 +91,67 @@ func (t *BlockTree) String() string {
 	return buf.String()
 }
 
-func (t *BlockTree) Json() string {
+func (o *BlockTree) Json() string {
 	var out bytes.Buffer
-	err := json.Indent(&out, []byte(t.String()), "", "  ")
+	err := json.Indent(&out, []byte(o.String()), "", "  ")
 	if err != nil {
 		panic(err)
 	}
 	return out.String()
 }
 
-func (t *BlockTree) Root() common.Hash {
-	return t.root
+func (o *BlockTree) Root() common.Hash {
+	return o.root
 }
 
-func (t *BlockTree) Add(parent, hash common.Hash) error {
-	if _, ok := t.nodes[hash]; ok {
+// ordered leaves to root
+// func (o *BlockTree) Nodes() []common.Hash {
+// 	ret := make([]common.Hash, len(o.nodes))
+// 	nodes := append(make([]common.Hash, 0), o.root)
+//
+// 	for len(nodes) > 0 {
+// 		buf := make([]common.Hash, 0)
+// 		for _, node := range nodes {
+// 			leaves, _ := o.nodes[node]
+// 			for _, leaf := range leaves {
+// 			}
+// 		}
+// 	}
+// 	for i := 0; i< len(o.nodes); i++ {
+// 		for _, node := range nodes {
+// 			nodes = append(nodes, o.nodes[node])
+// 		}
+// 	}
+// }
+
+func (o *BlockTree) Nodes() []common.Hash {
+	nodes := append(make([]common.Hash, 0), o.root)
+	ret := make([]common.Hash, len(o.nodes))
+
+	var target common.Hash
+	i := len(o.nodes) - 1
+	for len(nodes) > 0 {
+		target = nodes[0]
+		nodes = nodes[1:]
+		if len(o.nodes[target]) > 0 {
+			nodes = append(nodes, o.nodes[target]...)
+		}
+		ret[i] = target
+		i--
+	}
+
+	return ret
+}
+
+func (o *BlockTree) Add(parent, hash common.Hash) error {
+	if _, ok := o.nodes[hash]; ok {
 		return errors.New("DuplicatedHash")
 	}
-	if descendants, ok := t.nodes[parent]; !ok {
+	if descendants, ok := o.nodes[parent]; !ok {
 		return errors.New("NoParentHash")
 	} else {
-		t.nodes[parent] = append(descendants, hash)
-		t.nodes[hash] = make([]common.Hash, 0)
+		o.nodes[parent] = append(descendants, hash)
+		o.nodes[hash] = make([]common.Hash, 0)
 	}
 	return nil
 }
@@ -136,8 +175,8 @@ func (o *BlockTree) Prune(until common.Hash) {
 	o.root = until
 }
 
-func (t *BlockTree) Has(id common.Hash) bool {
-	_, ok := t.nodes[id]
+func (o *BlockTree) Has(id common.Hash) bool {
+	_, ok := o.nodes[id]
 	return ok
 }
 
@@ -147,15 +186,15 @@ type pair struct {
 }
 
 // EncodeRLP implements rlp.Encoder
-func (t *BlockTree) EncodeRLP(w io.Writer) error {
+func (o *BlockTree) EncodeRLP(w io.Writer) error {
 	ret := make([]interface{}, 0)
 	children := []common.Hash{
-		t.root,
+		o.root,
 	}
 	for len(children) > 0 {
 		var node common.Hash
 		node, children = children[0], children[1:]
-		tmp := t.nodes[node]
+		tmp := o.nodes[node]
 		ret = append(ret, uint(len(tmp)), node)
 		if len(tmp) > 0 {
 			children = append(children, tmp...)
@@ -165,7 +204,7 @@ func (t *BlockTree) EncodeRLP(w io.Writer) error {
 }
 
 // DecodeRLP implements rlp.Decoder
-func (t *BlockTree) DecodeRLP(s *rlp.Stream) error {
+func (o *BlockTree) DecodeRLP(s *rlp.Stream) error {
 	blob, err := s.Raw()
 	if err != nil {
 		return err
@@ -176,8 +215,8 @@ func (t *BlockTree) DecodeRLP(s *rlp.Stream) error {
 		return err
 	}
 
-	if t.nodes == nil {
-		t.nodes = make(map[common.Hash][]common.Hash, 0)
+	if o.nodes == nil {
+		o.nodes = make(map[common.Hash][]common.Hash, 0)
 	}
 
 	var root = pair{}
@@ -195,7 +234,7 @@ func (t *BlockTree) DecodeRLP(s *rlp.Stream) error {
 		return err
 	}
 
-	t.root = root.id
+	o.root = root.id
 	items := []pair{root}
 
 	for len(items) > 0 {
@@ -216,7 +255,7 @@ func (t *BlockTree) DecodeRLP(s *rlp.Stream) error {
 			children = append(children, c.id)
 			items = append(items, c)
 		}
-		t.nodes[id] = children
+		o.nodes[id] = children
 	}
 	return nil
 }

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -25,12 +27,14 @@ type client struct {
 	BTPMessageCenter *BTPMessageCenter
 	from             btp.BtpAddress
 	to               btp.BtpAddress
+	log              log.Logger
 }
 
 func NewClient(url string, from, to btp.BtpAddress, log log.Logger) *client {
 	o := &client{
 		from: from,
 		to:   to,
+		log:  log,
 	}
 
 	if client, err := ethclient.Dial(url); err != nil {
@@ -63,7 +67,7 @@ func (o *client) ReceiptsByBlockHash(ctx context.Context, hash common.Hash) (typ
 		}
 		receipts = append(receipts, receipt)
 	}
-	return types.Receipts(receipts), nil
+	return receipts, nil
 }
 
 type BTPData struct {
@@ -78,8 +82,13 @@ func (o *client) WatchBTPData(ctx context.Context, number *big.Int, channel chan
 				messages: make([]*BTPMessageCenterMessage, 0),
 			}
 			if head, err := o.HeaderByNumber(ctx, number); err != nil {
-				// TODO handle error
-				return
+				if err == ethereum.NotFound {
+					time.Sleep(time.Second)
+					continue
+				} else {
+					// TODO handle error
+					panic(err)
+				}
 			} else {
 				data.header = head
 			}
@@ -99,9 +108,7 @@ func (o *client) WatchBTPData(ctx context.Context, number *big.Int, channel chan
 					data.messages = append(data.messages, iter.Event)
 				}
 			}
-			fmt.Println("Watch HEAD1):", data.header.Number.Uint64())
 			channel <- data
-			fmt.Println("Watch HEAD2):", data.header.Number.Uint64())
 			number.Add(number, big.NewInt(1))
 		}
 	}()
@@ -113,20 +120,99 @@ func (o *client) WatchHeader(ctx context.Context, number *big.Int, channel chan<
 		for {
 			select {
 			case <-ctx.Done():
-				fmt.Println("TODO:)", ctx.Err())
-				return
+				panic(fmt.Sprintf("TODO:) watch header ctx done - error(%s)\n", ctx.Err()))
 			default:
-				head, err := o.HeaderByNumber(ctx, number)
-				if err != nil {
-					// TODO handle error
-					return
+				if head, err := o.HeaderByNumber(ctx, number); err != nil {
+					if err == ethereum.NotFound {
+						o.log.Debugf("not found - number(%d)\n", number.Uint64())
+						time.Sleep(time.Second)
+					} else {
+						panic(fmt.Sprintf("TODO:) fail to fetching header - error(%s)\n", err.Error()))
+					}
+				} else {
+					number.Add(number, big.NewInt(1))
+					channel <- head
 				}
-				number.Add(number, big.NewInt(1))
-				channel <- head
 			}
 		}
 	}()
 	return nil
+}
+
+func (o *client) MessagesByBlockHash(ctx context.Context, hash common.Hash) ([]*BTPMessageCenterMessage, error) {
+	head, err := o.HeaderByHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	number := head.Number.Uint64()
+	if iter, err := o.BTPMessageCenter.FilterMessage(&bind.FilterOpts{
+		Context: ctx,
+		Start:   number,
+		End:     &number,
+	}, []string{
+		string(o.to),
+	}, nil); err != nil {
+		o.log.Errorf("fail to fetching btp message - block hash(%s) err(%s)\n", hash.Hex(), err.Error())
+		return nil, err
+	} else {
+		msgs := make([]*BTPMessageCenterMessage, 0)
+		for iter.Next() {
+			msgs = append(msgs, iter.Event)
+		}
+		return msgs, nil
+	}
+}
+
+func (o *client) FetchMissingMessages(ctx context.Context, from, until uint64, sequence uint64) ([]*BTPMessageCenterMessage, error) {
+
+	if sequence > 0 {
+		if iter, err := o.BTPMessageCenter.FilterMessage(&bind.FilterOpts{
+			Context: ctx,
+			Start:   from,
+			End:     &until,
+		}, []string{
+			//string(o.to),
+		}, []*big.Int{
+			new(big.Int).SetUint64(sequence),
+		}); err != nil {
+			panic(err)
+		} else {
+			iter.Next()
+			m := iter.Event
+			from = m.Raw.BlockNumber
+			o.log.Debugf("FinalizedMessage BLK Number(%d)\n", from)
+		}
+	}
+
+	msgs := make([]*BTPMessageCenterMessage, 0)
+	if iter, err := o.BTPMessageCenter.FilterMessage(&bind.FilterOpts{
+		Context: ctx,
+		Start:   from,
+		End:     &until,
+	}, []string{
+		string(o.to),
+	}, nil); err != nil {
+		panic(err)
+	} else {
+		for iter.Next() {
+			o.log.Debugf("Missing Message: number(%d) sequence(%d)\n", iter.Event.Raw.BlockNumber, iter.Event.Seq.Uint64())
+			msgs = append(msgs, iter.Event)
+		}
+		return msgs, nil
+	}
+}
+
+func (o *client) MessageBySequence(opts *bind.FilterOpts, sequence uint64) (*BTPMessageCenterMessage, error) {
+	if iter, err := o.BTPMessageCenter.FilterMessage(opts, []string{
+		string(o.to),
+	}, []*big.Int{
+		new(big.Int).SetUint64(sequence),
+	}); err != nil {
+		return nil, err
+	} else {
+		iter.Next()
+		return iter.Event, nil
+	}
 }
 
 func (o *client) WatchMessage(ctx context.Context, from uint64, sequence *big.Int, channel chan<- *BTPMessageCenterMessage) error {
@@ -271,22 +357,20 @@ func (o *client) FindMessage(ctx context.Context, start uint64, end *uint64, seq
 	}
 }
 
-func (o *client) WatchStatus(ctx context.Context, channel chan<- *TypesLinkStats) error {
+func (o *client) WatchStatus(ctx context.Context, channel chan<- *TypesLinkStatus) error {
 	head := make(chan *types.Header)
 	if _, err := o.SubscribeNewHead(ctx, head); err != nil {
 		return err
 	}
 
-	var oldStatus *TypesLinkStats
+	var oldStatus *TypesLinkStatus
 	go func() {
 		for {
 			select {
 			case <-head:
 				newStatus, err := o.BTPMessageCenter.GetStatus(nil, o.to.String())
 				if err != nil {
-					fmt.Println("err:", err)
-					// TODO handle error
-					return
+					panic(fmt.Sprintf("TODO:) watch status error - error(%s)\n", err.Error()))
 				}
 				if oldStatus == nil || diff(oldStatus, &newStatus) {
 					oldStatus = &newStatus
@@ -298,9 +382,6 @@ func (o *client) WatchStatus(ctx context.Context, channel chan<- *TypesLinkStats
 	return nil
 }
 
-func diff(v1, v2 *TypesLinkStats) bool {
-	var x common.Hash
-	x = common.Hash{}
-	fmt.Println(x)
+func diff(v1, v2 *TypesLinkStatus) bool {
 	return v1.TxSeq.Cmp(v2.TxSeq) != 0 && v1.Verifier.Height.Cmp(v2.Verifier.Height) != 0
 }
