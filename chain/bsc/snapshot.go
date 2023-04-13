@@ -2,6 +2,7 @@ package bsc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/icon-project/btp2/common/db"
 	"golang.org/x/crypto/sha3"
@@ -70,7 +72,7 @@ func newSnapshot(
 		snap.Candidates[v] = struct{}{}
 	}
 	for i, v := range recents {
-		snap.Recents[number+uint64(i)] = v
+		snap.Recents[number-uint64(i)] = v
 	}
 
 	return snap
@@ -182,7 +184,7 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 		return nil, errors.New("Out of range block")
 	}
 	if !bytes.Equal(s.Hash.Bytes(), head.ParentHash.Bytes()) {
-		return nil, errors.New("Inconsistent Block Hash")
+		return nil, errors.New(fmt.Sprintf("Inconsistent Block Hash - curr(%d) next(%d)", s.Number, head.Number.Uint64()))
 	}
 
 	snap := s.copy()
@@ -350,4 +352,38 @@ func encodeSigHeader(w io.Writer, header *types.Header, chainId *big.Int) {
 	if err != nil {
 		panic("can't encode: " + err.Error())
 	}
+}
+
+func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client) (*Snapshot, error) {
+	curVals, err := ParseValidators(head.Extra[extraVanity : len(head.Extra)-extraSeal])
+	if err != nil {
+		return nil, err
+	}
+
+	if head.Number.Uint64() == 0 {
+		return newSnapshot(head.Number.Uint64(), head.Hash(), curVals, curVals,
+			make([]common.Address, 0), head.Coinbase, head.ParentHash), nil
+	}
+
+	number := new(big.Int).SetUint64(head.Number.Uint64() - epoch)
+	oldHead, err := client.HeaderByNumber(context.Background(), number)
+	if err != nil {
+		return nil, err
+	}
+
+	oldVals, err := ParseValidators(oldHead.Extra[extraVanity : len(oldHead.Extra)-extraSeal])
+	if err != nil {
+		return nil, err
+	}
+
+	recents := make([]common.Address, 0)
+	for i := head.Number.Int64() - int64(len(oldVals)/2); i <= head.Number.Int64(); i++ {
+		if oldHead, err = client.HeaderByNumber(context.Background(), big.NewInt(i)); err != nil {
+			return nil, err
+		} else {
+			recents = append(recents, oldHead.Coinbase)
+		}
+	}
+	return newSnapshot(head.Number.Uint64(), head.Hash(), oldVals,
+		curVals, recents, head.Coinbase, head.ParentHash), nil
 }

@@ -104,26 +104,6 @@ func (o *BlockTree) Root() common.Hash {
 	return o.root
 }
 
-// ordered leaves to root
-// func (o *BlockTree) Nodes() []common.Hash {
-// 	ret := make([]common.Hash, len(o.nodes))
-// 	nodes := append(make([]common.Hash, 0), o.root)
-//
-// 	for len(nodes) > 0 {
-// 		buf := make([]common.Hash, 0)
-// 		for _, node := range nodes {
-// 			leaves, _ := o.nodes[node]
-// 			for _, leaf := range leaves {
-// 			}
-// 		}
-// 	}
-// 	for i := 0; i< len(o.nodes); i++ {
-// 		for _, node := range nodes {
-// 			nodes = append(nodes, o.nodes[node])
-// 		}
-// 	}
-// }
-
 func (o *BlockTree) Nodes() []common.Hash {
 	nodes := append(make([]common.Hash, 0), o.root)
 	ret := make([]common.Hash, len(o.nodes))

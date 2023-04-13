@@ -125,17 +125,16 @@ var logoLines = []string{
 }
 
 func main() {
-	rootCmd, rootVc := cli.NewCommand(nil, nil, "btp2", "BTP Relay CLI")
+	rootCmd, rootVc := cli.NewCommand(nil, nil, "relay", "BTP Relay CLI")
 	cfg := &Config{}
 	rootCmd.Long = "Command Line Interface of Relay for Blockchain Transmission Protocol"
 	cli.SetEnvKeyReplacer(rootVc, strings.NewReplacer(".", "_"))
-	//rootVc.Debug()
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
-		Short: "Print btp2 version",
+		Short: "Print relay version",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("btp2 version", version, build)
+			fmt.Println("relay version", version, build)
 		},
 	})
 

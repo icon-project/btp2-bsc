@@ -40,14 +40,6 @@ func newSnapshots(chainId *big.Int, client *ethclient.Client, cacheSize int, dat
 	return snaps
 }
 
-func (o *Snapshots) has(id common.Hash) bool {
-	if bk, err := o.database.GetBucket("Snapshot"); err != nil {
-		panic(err)
-	} else {
-		return bk.Has(append([]byte("snap-"), id[:]...))
-	}
-}
-
 func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 	// on cache memory
 	if snap, ok := o.cache.Get(id); ok {

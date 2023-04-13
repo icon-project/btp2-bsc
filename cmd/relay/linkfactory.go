@@ -3,11 +3,12 @@ package main
 import (
 	"fmt"
 	"path"
+	"strconv"
 
 	"github.com/icon-project/btp2/bsc/chain/bsc"
 	"github.com/icon-project/btp2/chain"
-	"github.com/icon-project/btp2/chain/ethbr"
 	"github.com/icon-project/btp2/chain/icon"
+	"github.com/icon-project/btp2/chain/icon/btp2"
 	"github.com/icon-project/btp2/common/link"
 	"github.com/icon-project/btp2/common/log"
 	"github.com/icon-project/btp2/common/types"
@@ -45,7 +46,6 @@ func NewLink(cfg *Config, srcWallet wallet.Wallet, dstWallet wallet.Wallet, modL
 		}
 	case BothDirection:
 		srcLog := setLogger(cfg, srcWallet, modLevels)
-		srcLog.Debugln(cfg.FilePath, cfg.BaseDir)
 		if cfg.BaseDir == "" {
 			cfg.BaseDir = path.Join(".", ".btp2", cfg.Src.Address.NetworkAddress())
 		}
@@ -59,7 +59,6 @@ func NewLink(cfg *Config, srcWallet wallet.Wallet, dstWallet wallet.Wallet, modL
 		}
 
 		dstLog := setLogger(cfg, dstWallet, modLevels)
-		dstLog.Debugln(cfg.FilePath, cfg.BaseDir)
 		if cfg.BaseDir == "" {
 			cfg.BaseDir = path.Join(".", ".btp2", cfg.Dst.Address.NetworkAddress())
 		}
@@ -97,31 +96,41 @@ func newLink(s string, cfg chain.Config, l log.Logger, w wallet.Wallet, linkErrC
 	return lk, nil
 }
 
+func convToUint64(m map[string]interface{}, k string, def uint64) uint64 {
+	if val, ok := m[k]; !ok {
+		return def
+	} else {
+		if val, err := strconv.ParseUint(fmt.Sprintf("%v", val), 10, 64); err != nil {
+			panic(err)
+		} else {
+			return val
+		}
+	}
+}
+
 func newReceiver(s string, cfg chain.Config, l log.Logger) link.Receiver {
 	var receiver link.Receiver
-
-	fmt.Println("HARDHAT:", HARDHAT, "in:", s)
 	switch s {
-	case BSC, HARDHAT:
-		bsccfg := bsc.Config{
-			ChainID:     int(99),
-			Epoch:       int(200),
-			StartNumber: int(200),
+	case BSC:
+		fmt.Println("##")
+		if val, ok := cfg.Src.Options["db_path"]; !ok {
+			fmt.Println("==??")
+			cfg.Src.Options["db_path"] = "./data"
+		} else {
+			fmt.Println("==>", val)
+		}
+		receiver = bsc.NewReceiver(bsc.RecvConfig{
+			ChainID:     bsc.ChainID(cfg.Src.Endpoint),
+			Epoch:       uint64(200),
+			StartNumber: convToUint64(cfg.Src.Options, "start_number", 0),
 			SrcAddress:  cfg.Src.Address,
 			DstAddress:  cfg.Dst.Address,
 			Endpoint:    cfg.Src.Endpoint,
-			DBType:      "leveldb",
-		}
-		// if jd, err := json.Marshal(cfg.Src.Options); err != nil {
-		// 	panic(err)
-		// } else {
-		// 	fmt.Println("jd:", hex.EncodeToString(jd))
-		// 	if err := json.Unmarshal(jd, &bsccfg); err != nil {
-		// 		panic(err)
-		// 	}
-		// }
-		fmt.Printf("cfg:%+v\n", bsccfg)
-		receiver = bsc.NewReceiver(bsccfg, l)
+			DBType:      fmt.Sprintf("%v", cfg.Src.Options["db_type"]),
+			DBPath:      fmt.Sprintf("%v", cfg.Src.Options["db_path"]),
+		}, l)
+	case ICON:
+		receiver = btp2.NewBTP2(cfg.Src.Address, cfg.Dst.Address, cfg.Src.Endpoint, l)
 	default:
 		l.Fatalf("Not supported receiver for chain:%s", s)
 		return nil
@@ -129,18 +138,22 @@ func newReceiver(s string, cfg chain.Config, l log.Logger) link.Receiver {
 	return receiver
 }
 
-func newSender(s string, srcCfg chain.BaseConfig, dstCfg chain.BaseConfig, w wallet.Wallet, l log.Logger) types.Sender {
+func newSender(s string, src chain.BaseConfig, dst chain.BaseConfig, w wallet.Wallet, l log.Logger) types.Sender {
 	var sender types.Sender
-
 	switch s {
 	case BSC:
-		sender = ethbr.NewSender(srcCfg.Address, dstCfg.Address, w, dstCfg.Endpoint, nil, l)
+		sender = bsc.NewSender(bsc.SenderConfig{
+			SrcAddress: src.Address,
+			DstAddress: dst.Address,
+			Endpoint:   dst.Endpoint,
+			ChainID:    bsc.ChainID(dst.Endpoint),
+			Epoch:      uint64(200),
+		}, w, l)
 	case ICON:
-		sender = icon.NewSender(srcCfg.Address, dstCfg.Address, w, dstCfg.Endpoint, srcCfg.Options, l)
+		sender = icon.NewSender(src.Address, dst.Address, w, dst.Endpoint, src.Options, l)
 	default:
 		l.Fatalf("Not supported sender for chain:%s", s)
 		return nil
 	}
-
 	return sender
 }
