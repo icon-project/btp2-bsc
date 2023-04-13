@@ -2,19 +2,14 @@ import fs from 'fs';
 import { ethers } from 'hardhat';
 import {Contract} from "../icon/contract";
 import {IconNetwork} from "../icon/network";
-import {Deployments} from "./config";
-const {
-    E2E_ICON_NETWORK_ID,
-    E2E_ETH_NETWORK_ID,
-    JAVASCORE_PATH
-} = process.env
+import {Deployments, ChainConfig, chainType} from "./config";
 
-const deployments = new Deployments();
+const {JAVASCORE_PATH} = process.env
+const deployments = new Deployments(new Map());
 
-async function deploy_java() {
-  const iconNetwork = IconNetwork.getDefault();
-  const BMC_NETWORK_ID = "0x" + iconNetwork.nid.toString(16) + ".icon"
-  console.log(`ICON: deploy BMC for ${BMC_NETWORK_ID}`)
+async function deploy_java(target: string, chain: any) {
+  const iconNetwork = IconNetwork.getNetwork(target);
+  console.log(`${target}: deploy BMC for ${chain.network}`)
 
   const bmcJar = JAVASCORE_PATH + '/bmc/build/libs/bmc-0.1.0-optimized.jar'
   const content = fs.readFileSync(bmcJar).toString('hex')
@@ -22,27 +17,25 @@ async function deploy_java() {
   const deployTxHash = await bmc.deploy({
     content: content,
     params: {
-      _net: BMC_NETWORK_ID
+      _net: chain.network
     }
   })
   const result = await bmc.getTxResult(deployTxHash)
   if (result.status != 1) {
     throw new Error(`BMC deployment failed: ${result.txHash}`);
   }
-  console.log(`ICON BMC: deployed to ${bmc.address}`);
+  console.log(`${target}: BMC deployed to ${bmc.address}`);
 
-  deployments.set('icon', {
-    'network': BMC_NETWORK_ID,
+  deployments.set(target, {
+    'network': chain.network,
     'contracts': {
       'bmc': bmc.address
     }
   })
 }
 
-async function deploy_solidity() {
-  const network = await ethers.provider.getNetwork()
-  const BMC_NETWORK_ID = "0x" + network.chainId.toString(16) + ".hardhat"
-  console.log(`Hardhat: deploy BMC modules for ${BMC_NETWORK_ID}`)
+async function deploy_solidity(target: string, chain: any) {
+  console.log(`${target}: deploy BMC modules for ${chain.network}`)
 
   const BMCManagement = await ethers.getContractFactory("BMCManagement");
   const bmcm = await BMCManagement.deploy();
@@ -59,39 +52,54 @@ async function deploy_solidity() {
   const BMCPeriphery = await ethers.getContractFactory("BMCPeriphery");
   const bmcp = await BMCPeriphery.deploy();
   await bmcp.deployed();
-  await bmcp.initialize(BMC_NETWORK_ID, bmcm.address, bmcs.address);
+  await bmcp.initialize(chain.network, bmcm.address, bmcs.address);
   console.log(`BMCPeriphery: deployed to ${bmcp.address}`);
 
-  console.log('Hardhat: management.setBMCPeriphery');
+  console.log(`${target}: management.setBMCPeriphery`);
   await bmcm.setBMCPeriphery(bmcp.address)
     .then((tx) => {
       return tx.wait(1)
     });
-  console.log('Hardhat: management.setBMCService');
+  console.log(`${target}: management.setBMCService`);
   await bmcm.setBMCService(bmcs.address)
     .then((tx) => {
       return tx.wait(1)
     });
-  console.log('Hardhat: service.setBMCPeriphery');
+  console.log(`${target}: service.setBMCPeriphery`);
   await bmcs.setBMCPeriphery(bmcp.address)
     .then((tx) => {
       return tx.wait(1)
     });
 
-  deployments.set('hardhat', {
-    'network': BMC_NETWORK_ID,
+  deployments.set(target, {
+    'network': chain.network,
     'contracts': {
       'bmcm': bmcm.address,
       'bmcs': bmcs.address,
-      'bmcp': bmcp.address,
+      'bmc': bmcp.address,
     }
+  })
+}
+
+async function main() {
+  const link = ChainConfig.getLink();
+  const srcChain: any = ChainConfig.getChain(link.src);
+  const dstChain: any = ChainConfig.getChain(link.dst);
+  console.log('link:', link)
+  console.log('src:', srcChain)
+  console.log('dst:', dstChain)
+
+  await deploy_solidity(link.src, srcChain);
+  await deploy_java(link.dst, dstChain);
+
+  deployments.set('link', {
+    'src': link.src,
+    'dst': link.dst
   })
   deployments.save();
 }
 
-deploy_java()
-  .then(deploy_solidity)
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

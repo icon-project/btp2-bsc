@@ -46,7 +46,7 @@ make start-nodes
 Then, run the following command to setup the local ICON node.
 
 ```
-make setup-node
+make setup-icon
 ```
 
 You will be seeing a series of commands executed. But at first, the script will be stopped with the following message.
@@ -100,15 +100,8 @@ Multiple terminal windows are required to complete these next steps.
 Open a terminal window and run the following command to start the relay.
 
 ```
-./relay.sh hardhat
+./relay.sh
 ```
-
-
-> **Note**
-> If you deployed BMV for Bridge in the previous step, add `BMV_BRIDGE=true` environment variable as follows.
-> ```
-> BMV_BRIDGE=true ./relay.sh hardhat
-> ```
 
 You can now run the demo scenario script via the following command.
 
@@ -121,7 +114,6 @@ make run-demo
 ### Directory layout
 | Directory                       | Description                                      |
 |:--------------------------------|:-------------------------------------------------|
-| dapp-sample                     | Java contract for DApp sample                    |
 | docker                          | Docker-related files for ICON and Hardhat chains |
 | scripts                         | Scripts for setup, deployment and demo scenarios |
 | solidity                        | Root directory for compiling Solidity contracts  |

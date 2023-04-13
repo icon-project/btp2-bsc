@@ -5,7 +5,7 @@ GRADLE = ./gradlew
 
 HARDHAT = npx hardhat
 TS_NODE = npx ts-node
-NETWORK = --network bsc-docker
+NETWORK = --network bsc_private
 SOLIDITY_CONTRACTS = ./solidity/contracts
 
 .DEFAULT_GOAL := all
@@ -15,10 +15,6 @@ all:
 .PHONY: prepare
 prepare:
 	npm install
-
-.PHONY: custom-cmd
-custom-cmd:
-	@ echo ">>> HI~"
 
 .PHONY: build clean deploy
 
@@ -60,6 +56,7 @@ build-xcall-java:
 
 build-dapp-java:
 	@ echo ">>> Build DApp sample javascore" ; \
+	cd $(JAVASCORE_PATH) ; \
 	$(GRADLE) dapp-sample:optimizedJar
 
 build-all: compile build-bmc-java build-bmv-java build-xcall-java build-dapp-java
@@ -84,8 +81,8 @@ deploy-xcall:
 
 deploy-dapp:
 	@ echo ">>> Deploy DApp contracts" ; \
-	E2E_DEMO_PATH=$(PWD) \
-	$(HARDHAT) $(NETWORK) run scripts/deploy_dapp.ts
+	JAVASCORE_PATH=$(JAVASCORE_PATH) \
+	$(HARDHAT) $(NETWORK) run scripts/setup/deploy_dapp.ts
 
 deploy-all: deploy-bmc deploy-bmv deploy-xcall deploy-dapp
 
@@ -99,30 +96,43 @@ start-bsc: build-bsc
 	cd docker/bsc; \
 	make start-simple
 
-start-nodes: start-bsc
-	@ echo ">>> Start nodes" ; \
+start-icon:
+	@ echo ">>> Start icon" ; \
 	cd docker; \
 	docker compose up icon-node -d
 
+start-nodes: start-bsc start-icon
+	@ echo ">>> Start nodes" ;
+
 stop-bsc:
-	@ echo ">>> Start nodes" ; \
+	@ echo ">>> Start bsc" ; \
 	cd docker/bsc; \
 	make stop-all
 
-reset-bsc:
-	@ echo ">>> Start nodes" ; \
+stop-icon:
+	@ echo ">>> Stop icon" ; \
+	cd docker; \
+	docker compose down
+
+stop-nodes: stop-bsc stop-icon
+	@ echo ">>> Stop nodes" ; \
+
+reset-bsc: stop-bsc
+	@ echo ">>> Reset bsc" ; \
 	cd docker/bsc; \
 	make reset
 
-stop-nodes: stop-bsc reset-bsc
-	@ echo ">>> Stop nodes" ; \
+reset-icon: stop-icon
+	@ echo ">>> Reset icon" ; \
 	cd docker; \
-	docker compose down; \
 	cd icon; \
 	rm -rf logs/*; \
 	rm -rf data/*;
 
-setup-node:
+reset-nodes: reset-bsc reset-icon
+	@ echo ">>> Reset nodes" ;
+
+setup-icon:
 	@ echo ">>> Setup ICON node" ; \
 	E2E_DEMO_PATH=$(PWD) \
 	$(TS_NODE) scripts/setup/setup_node.ts

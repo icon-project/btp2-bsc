@@ -1,0 +1,26 @@
+{
+  "chains": {
+    "bsc_testnet": {
+      "network": "0x61.bsc",
+      "endpoint": "https://data-seed-prebsc-1-s1.binance.org:8545",
+      "keystore": "./bsc-testnet.json",
+      "keypass": "btp2"
+    },
+    "bsc_private": {
+      "network": "0x63.bsc",
+      "endpoint": "http://localhost:8545",
+      "keystore": "./docker/bsc/keystore0.json",
+      "keypass": ""
+    },
+    "icon0": {
+      "network": "0x3.icon",
+      "endpoint": "http://localhost:9080/api/v3/icon_dex",
+      "keystore": "./docker/icon/config/keystore.json",
+      "keypass": "gochain"
+    }
+  },
+  "link": {
+    "src": "bsc_private",
+    "dst": "icon0"
+  }
+}

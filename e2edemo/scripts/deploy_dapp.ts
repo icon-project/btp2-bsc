@@ -28,7 +28,7 @@ async function deploy_dapp() {
   console.log(`ICON DApp: deployed to ${dapp.address}`);
 
   // deploy DApp solidity
-  const hardhat = deployments.get('hardhat')
+  const hardhat = deployments.get('bsc')
   const DAppSample = await ethers.getContractFactory("DAppProxySample")
   const dappSol = await DAppSample.deploy()
   await dappSol.deployed()
@@ -38,7 +38,7 @@ async function deploy_dapp() {
 
   // update deployments
   deployments.set('icon', icon)
-  deployments.set('hardhat', hardhat)
+  deployments.set('bsc', hardhat)
   deployments.save();
 }
 
