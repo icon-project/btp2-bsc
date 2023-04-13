@@ -9,7 +9,7 @@
     "bsc_private": {
       "network": "0x63.bsc",
       "endpoint": "http://localhost:8545",
-      "keystore": "./docker/bsc/keystore0.json",
+      "keystore": "./docker/bsc/init-holders/0x59b02d4d2f94ea5c55230715a58ebb0b703bcd4b",
       "keypass": ""
     },
     "icon0": {
