@@ -1,16 +1,13 @@
 package bsc
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
 	"math/big"
 	"runtime"
 	"sync"
-	"time"
 
-	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/icon-project/btp2/common/errors"
@@ -47,6 +44,7 @@ type sender struct {
 	pending   chan *relayResult
 	executed  chan *relayResult
 	wallet    wallet.Wallet
+	handler   *MessageTxHandler
 }
 
 type SenderConfig struct {
@@ -71,6 +69,7 @@ func NewSender(config SenderConfig, wallet wallet.Wallet, log log.Logger) btp.Se
 		executed: make(chan *relayResult, 128),
 	}
 	o.snapshots = newSnapshots(o.chainId, o.client.Client, CacheSize, nil, log)
+	o.handler = newMessageTxHandler(o.snapshots, o.log)
 	return o
 }
 
@@ -93,7 +92,7 @@ func (o *sender) prepare() error {
 	}
 
 	// check block finality by the nearest epoch block
-	if snap, err := BootSnapshot(o.epoch, head, o.client.Client); err != nil {
+	if snap, err := BootSnapshot(o.epoch, head, o.client.Client, o.log); err != nil {
 		return err
 	} else {
 		o.log.Debugf("make initial snapshot - number(%d) hash(%s)", snap.Number, snap.Hash.Hex())
@@ -108,14 +107,13 @@ func (o *sender) Start() (<-chan *btp.RelayResult, error) {
 		return nil, err
 	}
 
-	finalities := make(chan *Snapshot)
 	replies := make(chan *btp.RelayResult)
-	go o.watchBlockFinalities(finalities)
-	go o.waitAndSendResults(finalities, replies)
+	go o.handler.Run(replies)
+	go o.watchBlockFinalities()
 	return replies, nil
 }
 
-func (o *sender) watchBlockFinalities(finalities chan<- *Snapshot) {
+func (o *sender) watchBlockFinalities() {
 	headCh := make(chan *types.Header)
 	number := new(big.Int).SetUint64(o.finality.Number + uint64(1))
 	snap := o.finality
@@ -134,7 +132,6 @@ func (o *sender) watchBlockFinalities(finalities chan<- *Snapshot) {
 				panic(err.Error())
 			}
 
-			o.log.Tracef("feed new block for checking finality - number(%d) hash(%s)", snap.Number, snap.Hash.Hex())
 			if fnzs, err := calc.feed(snap.Hash); err != nil {
 				panic(err.Error())
 			} else {
@@ -146,8 +143,8 @@ func (o *sender) watchBlockFinalities(finalities chan<- *Snapshot) {
 					panic(err.Error())
 				}
 				o.log.Tracef("new block finality - number(%d) hash(%s)", fn.Number, fn.Hash.Hex())
+				o.handler.SetNewFinality(fn)
 				o.finality = fn
-				finalities <- fn
 			}
 		}
 	}
@@ -181,161 +178,16 @@ func (o *sender) GetStatus() (*btp.BMCLinkStatus, error) {
 	}
 }
 
-// verbose return value....
 func (o *sender) Relay(rm btp.RelayMessage) (int, error) {
-	o.log.Traceln("++Sender::Relay")
-	defer o.log.Traceln("--Sender::Relay")
-	o.log.Tracef("pending len(%d) cap(%d) / executed len(%d) cap(%d)\n", len(o.pending), cap(o.pending), len(o.executed), cap(o.executed))
-	if len(o.pending) == cap(o.pending) || len(o.executed) == cap(o.executed) {
-		o.log.Warnln("sender is busy")
-		return 0, errors.New("sender is busy")
+	if o.handler.Busy() {
+		return 0, errors.New("Busy")
 	}
 
-	key := o.wallet.(*wallet.EvmWallet).Skey
-	opts, err := bind.NewKeyedTransactorWithChainID(key, o.chainId)
-	if err != nil {
-		o.log.Errorf("fail to create transactor - err(%s)", err.Error())
+	if opts, err := bind.NewKeyedTransactorWithChainID(o.wallet.(*wallet.EvmWallet).Skey, o.chainId); err != nil {
 		return 0, err
-	}
-
-	tx, err := o.client.BTPMessageCenter.HandleRelayMessage(opts, o.src.String(), rm.Bytes())
-	if err != nil {
-		return 0, err
-	}
-
-	result := &relayResult{
-		tx:      tx,
-		receipt: nil,
-		RelayResult: &btp.RelayResult{
-			Id:        rm.Id(),
-			Err:       errors.UnknownError,
-			Finalized: false,
-		},
-	}
-	o.pending <- result
-	return 0, nil
-}
-
-// state transitions :)
-// Pending(P), Dropped(D), Executed(E), Finalized(F), Reply(R)
-// P -> D -> R
-// P -> E -> R
-// P -> E -> F -> R
-// P -> E -> D -> R
-func (o *sender) waitAndSendResults(finalities <-chan *Snapshot, replies chan<- *btp.RelayResult) {
-	waitings := make([]*relayResult, 0)
-	for {
-		select {
-		case r := <-o.pending:
-			o.log.Debugf("process pending message - hash(%s)", r.tx.Hash().Hex())
-			go func(r *relayResult) {
-				hash := r.tx.Hash()
-				attempt := 0
-				for {
-					_, pending, err := o.client.TransactionByHash(context.Background(), hash)
-					if err != nil {
-						if err == ethereum.NotFound {
-							o.log.Errorf("transaction has dropped - hash(%s)\n", hash.Hex())
-							r.Err = errors.UnknownError
-							replies <- r.RelayResult
-						} else {
-							o.log.Errorf("fail to fetching transaction - hash(%s)\n", hash.Hex())
-							replies <- r.RelayResult
-						}
-						break
-					}
-
-					if pending {
-						if attempt > 3 {
-							o.log.Errorf("fail to executing transaction in allowed time - hash(%s)\n", hash.Hex())
-							r.Err = errors.TimeoutError
-							replies <- r.RelayResult
-						}
-						attempt++
-						time.Sleep(2 * time.Second)
-						continue
-					} else {
-						if receipt, err := o.client.TransactionReceipt(context.Background(), hash); err != nil {
-							o.log.Errorf("fail to fetching receipt - hash(%s), err(%s)\n",
-								hash.Hex(), err.Error())
-						} else {
-							r.receipt = receipt
-							o.executed <- r
-						}
-						break
-					}
-				}
-			}(r)
-		case r := <-o.executed:
-			o.log.Debugln("process executed message - hash(%s)", r.receipt.TxHash.Hex())
-			// TODO extract methods
-			go func(r *relayResult) {
-				if r.receipt.Status == types.ReceiptStatusFailed {
-					from, err := types.Sender(types.NewEIP155Signer(r.tx.ChainId()), r.tx)
-					if err != nil {
-						panic("TODO err:" + err.Error())
-					}
-
-					if _, err = o.client.CallContract(context.Background(), ethereum.CallMsg{
-						From:     from,
-						To:       r.tx.To(),
-						Gas:      r.tx.Gas(),
-						GasPrice: r.tx.GasPrice(),
-						Value:    r.tx.Value(),
-						Data:     r.tx.Data(),
-					}, r.receipt.BlockNumber); err != nil {
-						o.log.Debugf("reproduce failure transaction - hash(%s) error(%s)\n", r.tx.Hash().Hex(), err.Error())
-						r.Err = errors.CodeOf(err)
-						// TODO check real value
-						TODO(fmt.Sprintf("err: %+v\n", err, errors.CodeOf(err)))
-						// append to watings
-						replies <- r.RelayResult
-					} else {
-						o.log.Warnf("fail to emulating reverts")
-					}
-					o.log.Infof("dispose of executed failure message\n")
-				} else {
-					o.log.Debugf("success handle message - hash(%s)", r.receipt.TxHash.Hex())
-					r.Err = errors.SUCCESS
-					waitings = append(waitings, r)
-				}
-				replies <- r.RelayResult
-			}(r)
-		case snap := <-finalities:
-			o.log.Tracef("on finalized - number(%d) hash(%s)\n", snap.Number, snap.Hash.Hex())
-			for i, r := range waitings {
-				o.log.Debugf("waiting peer finality - number(%d) tx(%s)",
-					r.receipt.BlockNumber.Uint64(), r.receipt.TxHash.Hex())
-				number := r.receipt.BlockNumber.Uint64()
-				if r.receipt.BlockNumber.Uint64() > snap.Number {
-					continue
-				}
-				for number < snap.Number {
-					o.log.Debugf("fin check target(%d) number(%d)\n", number, snap.Number)
-					var err error
-					snap, err = o.snapshots.get(snap.ParentHash)
-					if err != nil {
-						panic(fmt.Sprintf("No block snapshot - number(%d) hash(%s)\n",
-							r.receipt.BlockNumber, r.tx.Hash().Hex()))
-					}
-				}
-
-				if !bytes.Equal(r.receipt.BlockHash.Bytes(), snap.Hash.Bytes()) {
-					// dropped tx
-					o.log.Panicf("message in unknown block - number(%d) expected(%s) actual(%s)",
-						number, snap.Hash.Hex(), r.receipt.BlockHash.Hex())
-					return
-				}
-
-				o.log.Infof("finalize message - number(%d) hash(%s)",
-					r.receipt.BlockNumber, r.receipt.BlockHash.Hex())
-				r.Finalized = true
-				// remove finalized message
-				waitings[i] = waitings[len(waitings)-1]
-				waitings = waitings[:len(waitings)-1]
-				replies <- r.RelayResult
-			}
-		}
+	} else {
+		o.handler.Send(newMessageTx(rm.Id(), o.src.String(), o.client, opts, rm.Bytes(), o.log))
+		return 0, nil
 	}
 }
 
