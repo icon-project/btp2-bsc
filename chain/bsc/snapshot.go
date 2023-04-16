@@ -10,6 +10,8 @@ import (
 	"math/big"
 	"sort"
 
+	"github.com/icon-project/btp2/common/log"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -72,7 +74,7 @@ func newSnapshot(
 		snap.Candidates[v] = struct{}{}
 	}
 	for i, v := range recents {
-		snap.Recents[number-uint64(i)] = v
+		snap.Recents[number-uint64(len(recents)-1-i)] = v
 	}
 
 	return snap
@@ -184,7 +186,8 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 		return nil, errors.New("Out of range block")
 	}
 	if !bytes.Equal(s.Hash.Bytes(), head.ParentHash.Bytes()) {
-		return nil, errors.New(fmt.Sprintf("Inconsistent Block Hash - curr(%d) next(%d)", s.Number, head.Number.Uint64()))
+		return nil, errors.New(fmt.Sprintf("Inconsistent Block Hash - curr(%d:%s) next(%d:%s:%s)",
+			s.Number, s.Hash.Hex(), head.Number.Uint64(), head.ParentHash.Hex(), head.Hash()))
 	}
 
 	snap := s.copy()
@@ -354,7 +357,7 @@ func encodeSigHeader(w io.Writer, header *types.Header, chainId *big.Int) {
 	}
 }
 
-func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client) (*Snapshot, error) {
+func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, log log.Logger) (*Snapshot, error) {
 	curVals, err := ParseValidators(head.Extra[extraVanity : len(head.Extra)-extraSeal])
 	if err != nil {
 		return nil, err
