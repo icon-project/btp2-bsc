@@ -44,6 +44,7 @@ type Snapshot struct {
 	Validators map[common.Address]struct{} `json:"validators"`
 	Candidates map[common.Address]struct{} `json:"candidates"`
 	Recents    map[uint64]common.Address   `json:"recents"`
+	log        log.Logger
 }
 
 // newSnapshot creates a new snapshot with the specified startup parameters. This
@@ -57,6 +58,7 @@ func newSnapshot(
 	recents []common.Address,
 	sealer common.Address,
 	parentHash common.Hash,
+	log log.Logger,
 ) *Snapshot {
 	snap := &Snapshot{
 		Number:     number,
@@ -66,6 +68,7 @@ func newSnapshot(
 		Candidates: make(map[common.Address]struct{}),
 		Recents:    make(map[uint64]common.Address),
 		Sealer:     sealer,
+		log:        log,
 	}
 	for _, v := range validators {
 		snap.Validators[v] = struct{}{}
@@ -117,12 +120,13 @@ func (s *Snapshot) store(database db.Database) error {
 		if err != nil {
 			return err
 		}
+		s.log.Debugf("store snapshot - number(%d) hash(%s)", s.Number, s.Hash.Hex())
 		return bucket.Set(append([]byte("snap-"), s.Hash[:]...), blob)
 	}
 }
 
 // loadSnapshot loads an existing snapshot from the database.
-func loadSnapshot(database db.Database, hash common.Hash) (*Snapshot, error) {
+func loadSnapshot(database db.Database, hash common.Hash, log log.Logger) (*Snapshot, error) {
 	if database == nil {
 		return nil, errors.New("NoDatabase")
 	}
@@ -137,6 +141,7 @@ func loadSnapshot(database db.Database, hash common.Hash) (*Snapshot, error) {
 		if err := json.Unmarshal(blob, snap); err != nil {
 			return nil, err
 		}
+		snap.log = log
 		return snap, nil
 	}
 }
@@ -162,6 +167,7 @@ func (s *Snapshot) copy() *Snapshot {
 		Candidates: make(map[common.Address]struct{}),
 		Recents:    make(map[uint64]common.Address),
 		Sealer:     s.Sealer,
+		log:        s.log,
 	}
 
 	for v := range s.Validators {
@@ -365,7 +371,7 @@ func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, lo
 
 	if head.Number.Uint64() == 0 {
 		return newSnapshot(head.Number.Uint64(), head.Hash(), curVals, curVals,
-			make([]common.Address, 0), head.Coinbase, head.ParentHash), nil
+			make([]common.Address, 0), head.Coinbase, head.ParentHash, log), nil
 	}
 
 	number := new(big.Int).SetUint64(head.Number.Uint64() - epoch)
@@ -388,5 +394,5 @@ func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, lo
 		}
 	}
 	return newSnapshot(head.Number.Uint64(), head.Hash(), oldVals,
-		curVals, recents, head.Coinbase, head.ParentHash), nil
+		curVals, recents, head.Coinbase, head.ParentHash, log), nil
 }

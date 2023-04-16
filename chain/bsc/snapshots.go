@@ -52,7 +52,7 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 	if ok, err := hasSnapshot(o.database, id); err != nil {
 		return nil, err
 	} else if ok {
-		if snap, err := loadSnapshot(o.database, id); err != nil {
+		if snap, err := loadSnapshot(o.database, id, o.log); err != nil {
 			return nil, err
 		} else {
 			o.log.Tracef("hit storage - number(%d) hash(%s)", snap.Number, snap.Hash.Hex())
@@ -101,7 +101,7 @@ func (o *Snapshots) ensure(id common.Hash) error {
 		if ok, err := hasSnapshot(o.database, id); err != nil {
 			return err
 		} else if ok {
-			snap, err = loadSnapshot(o.database, id)
+			snap, err = loadSnapshot(o.database, id, o.log)
 			if err != nil {
 				return err
 			} else {
