@@ -378,23 +378,7 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 				blks.Prune(fnzs[len(fnzs)-1])
 			}
 
-			// DBG
-			if len(fnzs) > 0 {
-				o.log.Tracef("current accumulator height(%d)", o.accumulator.Height())
-				if s, e := o.snapshots.get(fnzs[0]); e != nil {
-					panic(e)
-				} else {
-					o.log.Tracef("add block to accumulator - num=(%d) hash(%s) len(%d)",
-						s.Number, s.Hash.Hex(), len(fnzs))
-				}
-
-			}
 			for _, fnz := range fnzs {
-				// update accumulator with hashes of finalized blocks
-				// o.accumulator.AddHash(fnz.Bytes())
-				// if err := o.accumulator.Flush(); err != nil {
-				// 	return nil, err
-				// }
 				if msgs, err := o.client.MessagesByBlockHash(context.Background(), fnz); err != nil {
 					for _, msg := range msgs {
 						o.log.Debugf("message exist in finalized block - number(%s) hash(%s) sequence(%d)",
@@ -529,13 +513,6 @@ func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (li
 			return nil, err
 		}
 
-		if msgproof == nil {
-			msgproof = &MessageProof{
-				Hash:     hash,
-				Proofs:   make([]BSCReceiptProof, 0),
-				sequence: msg.Seq.Uint64(),
-			}
-		}
 		// TODO FIXME not exact size...
 		size := int64(0)
 		for i := 0; i < len(proof); i++ {
@@ -545,6 +522,14 @@ func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (li
 			break
 		}
 		limit -= size
+
+		if msgproof == nil {
+			msgproof = &MessageProof{
+				Hash:     hash,
+				Proofs:   make([]BSCReceiptProof, 0),
+				sequence: msg.Seq.Uint64(),
+			}
+		}
 		msgproof.Proofs = append(msgproof.Proofs, BSCReceiptProof{
 			Key:   key,
 			Proof: proof,
@@ -698,43 +683,9 @@ func (o *receiver) prepare() error {
 	}
 
 	if !ok {
-		valBytes := head.Extra[extraVanity : len(head.Extra)-extraSeal]
-		vals, err := ParseValidators(valBytes)
+		snap, err := BootSnapshot(o.epoch, head, o.client.Client, o.log)
 		if err != nil {
-			o.log.Errorf("fail to parsing candidates set bytes - %s\n", hex.EncodeToString(valBytes))
 			return err
-		}
-
-		var snap *Snapshot
-		if head.Number.Uint64() == 0 {
-			snap = newSnapshot(head.Number.Uint64(), head.Hash(), vals,
-				vals, make([]common.Address, 0), head.Coinbase, head.ParentHash)
-		} else {
-			number := big.NewInt(head.Number.Int64() - int64(o.epoch))
-			oldHead, err := o.client.HeaderByNumber(context.Background(), number)
-			if err != nil {
-				o.log.Errorf("fail to fetching header - number(%d) error(%s)\n", number.Uint64(), err.Error())
-				return err
-			}
-
-			oldValBytes := oldHead.Extra[extraVanity : len(oldHead.Extra)-extraSeal]
-			oldVals, err := ParseValidators(oldValBytes)
-			if err != nil {
-				o.log.Errorf("fail to parsing validators set bytes - %s\n", hex.EncodeToString(oldValBytes))
-				return err
-			}
-
-			recents := make([]common.Address, 0)
-			for i := head.Number.Int64() - int64(len(oldVals)/2); i <= head.Number.Int64(); i++ {
-				if oldHead, err = o.client.HeaderByNumber(context.Background(), big.NewInt(i)); err != nil {
-					o.log.Errorf("fail to fetching header - number(%d) error(%s)\n", i, err.Error())
-					return err
-				} else {
-					recents = append(recents, oldHead.Coinbase)
-				}
-			}
-			snap = newSnapshot(head.Number.Uint64(), head.Hash(), oldVals,
-				vals, recents, head.Coinbase, head.ParentHash)
 		}
 
 		if err := snap.store(o.database); err != nil {

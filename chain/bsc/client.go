@@ -16,10 +16,6 @@ import (
 	btp "github.com/icon-project/btp2/common/types"
 )
 
-const (
-	WindowSize = 1024
-)
-
 type client struct {
 	*ethclient.Client
 	BTPMessageCenter *BTPMessageCenter
@@ -64,7 +60,6 @@ func NewClient(url string, from, to btp.BtpAddress, log log.Logger) *client {
 }
 
 func (o *client) ReceiptsByBlockHash(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-
 	block, err := o.BlockByHash(ctx, hash)
 	if err != nil {
 		return nil, err
@@ -179,7 +174,6 @@ func (o *client) MessageBySequence(opts *bind.FilterOpts, sequence uint64) (*BTP
 }
 
 func (o *client) MessagesAfterSequence(opts *bind.FilterOpts, sequence uint64) ([]*BTPMessageCenterMessage, error) {
-	o.log.Debugf("++Client::MessagesAfterSequence(%d~%d - %d)", opts.Start, *opts.End, sequence)
 	sp, ep := opts.Start, *opts.End
 	if ep-opts.Start > maxQueryRange {
 		sp = ep - maxQueryRange

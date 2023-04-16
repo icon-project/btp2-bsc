@@ -44,7 +44,7 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 	// on cache memory
 	if snap, ok := o.cache.Get(id); ok {
 		s := snap.(*Snapshot)
-		// o.log.Debugf("load snapshot on cache - number(%d) id(%s)\n", s.Number, s.Hash.Hex())
+		o.log.Tracef("hit cache - number(%d) hash(%s)", s.Number, s.Hash.Hex())
 		return s, nil
 	}
 
@@ -55,7 +55,7 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 		if snap, err := loadSnapshot(o.database, id); err != nil {
 			return nil, err
 		} else {
-			// o.log.Debugf("load snapshot on database - number(%d) id(%s)\n", snap.Number, snap.Hash.Hex())
+			o.log.Tracef("hit storage - number(%d) hash(%s)", snap.Number, snap.Hash.Hex())
 			return snap, nil
 		}
 	}
@@ -69,7 +69,7 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 		panic("fail to fetching snapshots")
 	} else {
 		s := snap.(*Snapshot)
-		// o.log.Debugf("load snapshot on network - number(%d) id(%s)\n", s.Number, s.Hash.Hex())
+		o.log.Tracef("hit network - number(%d) hash(%s)", s.Number, s.Hash.Hex())
 		return s, nil
 	}
 }
@@ -119,7 +119,7 @@ func (o *Snapshots) ensure(id common.Hash) error {
 	}
 
 	if len(heads) > 0 {
-		o.log.Debugf("preload snapshots with heads on network: %d ~ %d\n", heads[0].Number.Uint64(), heads[len(heads)-1].Number.Uint64())
+		o.log.Debugf("load snapshots from network - %d ~ %d", heads[len(heads)-1].Number.Uint64(), heads[0].Number.Uint64())
 	}
 
 	for i := range heads {
