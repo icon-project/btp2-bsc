@@ -30,25 +30,26 @@ func newBlockFinalityCalculator(epoch uint64, checkpoint *Snapshot, snapshots *S
 // TODO make to safe
 func (o *BlockFinalityCalculator) feed(feed common.Hash) ([]common.Hash, error) {
 	o.feeds = append(o.feeds, feed)
-	o.log.Tracef("current feeds - len=(%d) items=(%+v)", len(o.feeds), o.feeds)
-
+	o.log.Tracef("current feeds: %+v", o.feeds)
+	o.log.Tracef("current checkpoint - %d: %s", o.checkpoint.Number, o.checkpoint.Hash.Hex())
 	fnzs, err := o.calculate()
 	if err != nil {
 		o.log.Errorf("fail to calculate block finality - err(%s)\n", err.Error())
 		return nil, err
 	}
-	o.log.Tracef("newly finalized blocks - count=(%d), items=(%+v)", len(fnzs), fnzs)
+	o.log.Tracef("finalized block hashes: (%+v)", fnzs)
 	if len(fnzs) > 0 {
 		// set last finalized hash
 		var err error
-		o.checkpoint, err = o.snapshots.get(fnzs[0])
+		o.checkpoint, err = o.snapshots.get(fnzs[len(fnzs)-1])
 		if err != nil {
 			panic(fmt.Sprintf("fail to retrieve finalized block snapshot - hash(%s) err(%s)\n", fnzs[0].Hex(), err.Error()))
 		}
+		o.log.Tracef("update checkpoint - %d: %s", o.checkpoint.Number, o.checkpoint.Hash.Hex())
 
 		// dispose of finalized feeds
 		o.feeds = o.feeds[len(fnzs):len(o.feeds)]
-		o.log.Tracef("unfinalized blocks - len=(%d) items=(%+v)", len(o.feeds), o.feeds)
+		o.log.Tracef("leftover feeds - (%+v)", o.feeds)
 	}
 	return fnzs, nil
 }
@@ -73,9 +74,8 @@ func (o *BlockFinalityCalculator) calculate() ([]common.Hash, error) {
 		return nil, err
 	}
 
-	o.log.Tracef("calculate finalities of between [%d, %s] and [%d, %s]",
-		o.checkpoint.Number+uint64(len(o.feeds)), o.feeds[len(o.feeds)-1].Hex(),
-		o.checkpoint.Number, o.checkpoint.Hash.Hex())
+	o.log.Tracef("calculate between [%d: %s] ~ [%d: %s]",
+		o.checkpoint.Number, o.checkpoint.Hash.Hex(), snap.Number, snap.Hash.Hex())
 	for !bytes.Equal(snap.Hash.Bytes(), o.checkpoint.Hash.Bytes()) {
 		sealers[snap.Sealer] = struct{}{}
 		o.log.Tracef("current number=(%d) hash=(%s) sealer(%s)", snap.Number, snap.Hash.Hex(), snap.Sealer)
@@ -92,7 +92,6 @@ func (o *BlockFinalityCalculator) calculate() ([]common.Hash, error) {
 		} else if len(fnzs) > 0 || numberOfAuthorized(snap.Candidates, sealers) > len(snap.Candidates)*2/3 {
 			fnzs = append(fnzs, snap.Hash)
 		}
-		o.log.Tracef("current finalities=(%+v)", fnzs)
 
 		var err error
 		snap, err = o.snapshots.get(snap.ParentHash)
