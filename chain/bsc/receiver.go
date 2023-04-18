@@ -354,10 +354,10 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 		}
 
 		size := int64(math.Ceil(float64(head.Size())))
-		if limit < size {
+		if limit < size*5 {
 			break
 		} else {
-			limit -= size
+			limit -= size * 5
 		}
 
 		heads = append(heads, head)
@@ -518,7 +518,7 @@ func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (li
 		for i := 0; i < len(proof); i++ {
 			size += int64(len(proof[i]))
 		}
-		if limit < size {
+		if msgproof != nil && limit < size {
 			break
 		}
 		limit -= size
@@ -630,13 +630,13 @@ func (o *receiver) purgeAndWakeupIfNear(newFinality *btp.BMCLinkStatus) {
 	o.cond.L.Lock()
 	defer o.cond.L.Unlock()
 
-	o.log.Debugf("purge head cache - (%d) ~ (%d)", o.finality.number, newFinality.Verifier.Height)
 	for i := o.finality.number; i <= uint64(newFinality.Verifier.Height); i++ {
+		o.log.Tracef("purge head cache - (%d)", i)
 		o.heads.Remove(i)
 	}
 
-	o.log.Debugf("purge msg cache - (%d) ~ (%d)", o.finality.sequence, newFinality.RxSeq)
 	for i := o.finality.sequence; i <= uint64(newFinality.RxSeq); i++ {
+		o.log.Tracef("purge msg cache - (%d)", i)
 		o.msgs.Remove(i)
 	}
 
@@ -653,9 +653,7 @@ func (o *receiver) purgeAndWakeupIfNear(newFinality *btp.BMCLinkStatus) {
 
 // ensure initial merkle accumulator and snapshot
 func (o *receiver) prepare() error {
-	o.log.Traceln("++Recv::prepare")
-	defer o.log.Traceln("--Recv::prepare")
-
+	o.log.Debugf("prepare receiver")
 	number := big.NewInt(o.accumulator.Offset())
 	if number.Uint64()%o.epoch != 0 {
 		panic(fmt.Sprintf("Must be epoch block: epoch: %d number: %d\n", number.Uint64(), o.epoch))
@@ -698,8 +696,7 @@ func (o *receiver) prepare() error {
 }
 
 func (o *receiver) synchronize(until *big.Int) error {
-	o.log.Tracef("++Recv::synchronize(%d)", until.Uint64())
-	defer o.log.Tracef("--Recv::synchronize(%d)", until.Uint64())
+	o.log.Debugln("synchronize receiver")
 	// synchronize up to `target` block
 	target, err := o.client.HeaderByNumber(context.Background(), until)
 	if err != nil {
