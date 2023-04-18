@@ -59,6 +59,22 @@ func NewClient(url string, from, to btp.BtpAddress, log log.Logger) *client {
 	return o
 }
 
+func (o *client) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
+	attempt := 0
+	var err error
+	var head *types.Header
+	for attempt < 3 {
+		time.Sleep(time.Duration(attempt) * time.Second)
+		if head, err = o.Client.HeaderByNumber(ctx, number); err != nil {
+			attempt++
+			o.log.Warnf("fail to fetch header - err(%s) number(%d) retry(%d)", err, number.Uint64(), attempt)
+		} else {
+			return head, nil
+		}
+	}
+	return head, err
+}
+
 func (o *client) ReceiptsByBlockHash(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	block, err := o.BlockByHash(ctx, hash)
 	if err != nil {
@@ -89,13 +105,13 @@ func (o *client) WatchHeader(ctx context.Context, number *big.Int, channel chan<
 			case <-ctx.Done():
 				panic(fmt.Sprintf("TODO:) watch header ctx done - error(%s)\n", ctx.Err()))
 			default:
-				if head, err := o.HeaderByNumber(ctx, number); err != nil {
+				if head, err := o.Client.HeaderByNumber(ctx, number); err != nil {
 					if err == ethereum.NotFound {
 						time.Sleep(3 * time.Second)
 					} else {
 						if retry < 3 {
 							retry++
-							o.log.Errorf("fail to fetch header - retry(%d) err(%+v)", retry, err)
+							o.log.Errorf("fail to fetch header - retry(%d) number(%d) err(%+v)", retry, number.Uint64(), err)
 							continue
 						}
 						panic(fmt.Sprintf("fail to fetching header - error(%+v)", err))
