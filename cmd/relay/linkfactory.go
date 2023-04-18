@@ -108,20 +108,20 @@ func convToUint64(m map[string]interface{}, k string, def uint64) uint64 {
 	}
 }
 
+const (
+	Epoch = 200
+)
+
 func newReceiver(s string, cfg chain.Config, l log.Logger) link.Receiver {
 	var receiver link.Receiver
 	switch s {
 	case BSC:
-		fmt.Println("##")
-		if val, ok := cfg.Src.Options["db_path"]; !ok {
-			fmt.Println("==??")
+		if _, ok := cfg.Src.Options["db_path"]; !ok {
 			cfg.Src.Options["db_path"] = "./data"
-		} else {
-			fmt.Println("==>", val)
 		}
 		receiver = bsc.NewReceiver(bsc.RecvConfig{
 			ChainID:     bsc.ChainID(cfg.Src.Endpoint),
-			Epoch:       uint64(200),
+			Epoch:       uint64(Epoch),
 			StartNumber: convToUint64(cfg.Src.Options, "start_number", 0),
 			SrcAddress:  cfg.Src.Address,
 			DstAddress:  cfg.Dst.Address,
@@ -147,7 +147,7 @@ func newSender(s string, src chain.BaseConfig, dst chain.BaseConfig, w wallet.Wa
 			DstAddress: dst.Address,
 			Endpoint:   dst.Endpoint,
 			ChainID:    bsc.ChainID(dst.Endpoint),
-			Epoch:      uint64(200),
+			Epoch:      uint64(Epoch),
 		}, w, l)
 	case ICON:
 		sender = icon.NewSender(src.Address, dst.Address, w, dst.Endpoint, src.Options, l)
