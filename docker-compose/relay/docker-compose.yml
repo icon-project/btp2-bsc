@@ -2,7 +2,8 @@ version: "3.9"  # optional since v1.27.0
 services:
   relay:
     container_name: relay
-    image: relay:latest
+    network_mode: "host"
+    image: relay:v1.0.0
     volumes:
       - type: bind
         source: ./config
@@ -14,5 +15,9 @@ services:
         source: ./keystore
         target: /keystore
     environment:
-      - RELAY_CONFIG=/etc/config/relay_config.json
-    restart: always
+      - RELAY_CONFIG=/etc/config/config.json
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 10
