@@ -53,7 +53,7 @@ BUILD_TARGETS += relay
 
 linux : $(addsuffix -linux,$(BUILD_TARGETS))
 
-RELAY_IMAGE = relay:$(GL_TAG)
+RELAY_IMAGE = relay-bsc:$(GL_TAG)
 RELAY_DOCKER_DIR = $(BUILD_ROOT)/build/relay
 
 relay-image: relay-linux
@@ -63,7 +63,7 @@ relay-image: relay-linux
 	BIN_DIR=$(abspath $(LINUX_BIN_DIR)) \
 	BIN_VERSION=$(GL_VERSION) \
 	BUILD_TAGS="$(GOBUILD_TAGS)" \
-	$(BUILD_ROOT)/docker/relay/build.sh $(RELAY_IMAGE) $(BUILD_ROOT) $(RELAY_DOCKER_DIR)
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 $(BUILD_ROOT)/docker/relay/build.sh $(RELAY_IMAGE) $(BUILD_ROOT) $(RELAY_DOCKER_DIR)
 
 test :
 	$(GOBUILD_ENVS) $(GOTEST) $(GOBUILD_FLAGS) ./... $(GOTEST_FLAGS)
