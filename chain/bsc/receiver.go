@@ -50,7 +50,7 @@ type receiver struct {
 	start       uint64
 	chainId     *big.Int
 	epoch       uint64
-	client      *client
+	client      *Client
 	accumulator *mta.ExtAccumulator
 	cancel      context.CancelFunc
 	database    db.Database

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
@@ -12,16 +14,41 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/icon-project/btp2/common/log"
 	btp "github.com/icon-project/btp2/common/types"
 )
 
-type client struct {
+type Client struct {
 	*ethclient.Client
 	BTPMessageCenter *BTPMessageCenter
 	from             btp.BtpAddress
 	to               btp.BtpAddress
 	log              log.Logger
+}
+
+type transport struct {
+	transport http.RoundTripper
+	log       log.Logger
+}
+
+func (o *transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	var attempts int
+	var res *http.Response
+	var err error
+	for attempts < 5 {
+		time.Sleep(time.Duration(attempts) * time.Second)
+		if res, err = o.transport.RoundTrip(req); err != nil {
+			return nil, err
+		} else if res.StatusCode >= 500 {
+			log.Warnf("server faults - code(%d)", res.StatusCode)
+			attempts++
+			continue
+		} else {
+			return res, err
+		}
+	}
+	return nil, err
 }
 
 func ChainID(url string) uint64 {
@@ -37,45 +64,44 @@ func ChainID(url string) uint64 {
 	}
 }
 
-func NewClient(url string, from, to btp.BtpAddress, log log.Logger) *client {
-	o := &client{
+func NewClient(endpoint string, from, to btp.BtpAddress, log log.Logger) *Client {
+	o := &Client{
 		from: from,
 		to:   to,
 		log:  log,
 	}
 
-	if client, err := ethclient.Dial(url); err != nil {
+	u, err := url.Parse(endpoint)
+	if err != nil {
 		panic(err)
-	} else {
-		o.Client = client
 	}
 
+	var rc *rpc.Client
+	switch u.Scheme {
+	case "http", "https":
+		if rc, err = rpc.DialHTTPWithClient(endpoint, &http.Client{
+			Transport: &tolerant{
+				transport: http.DefaultTransport,
+			},
+		}); err != nil {
+			panic(err)
+		}
+	default:
+		if rc, err = rpc.DialContext(context.Background(), endpoint); err != nil {
+			panic(err)
+		}
+	}
+
+	o.Client = ethclient.NewClient(rc)
 	if bmc, err := NewBTPMessageCenter(common.HexToAddress(from.Account()), o.Client); err != nil {
 		panic(err)
 	} else {
 		o.BTPMessageCenter = bmc
 	}
-
 	return o
 }
 
-func (o *client) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
-	attempt := 0
-	var err error
-	var head *types.Header
-	for attempt < 3 {
-		time.Sleep(time.Duration(attempt) * time.Second)
-		if head, err = o.Client.HeaderByNumber(ctx, number); err != nil {
-			attempt++
-			o.log.Warnf("fail to fetch header - err(%s) number(%d) retry(%d)", err, number.Uint64(), attempt)
-		} else {
-			return head, nil
-		}
-	}
-	return head, err
-}
-
-func (o *client) ReceiptsByBlockHash(ctx context.Context, hash common.Hash) (types.Receipts, error) {
+func (o *Client) ReceiptsByBlockHash(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	block, err := o.BlockByHash(ctx, hash)
 	if err != nil {
 		return nil, err
@@ -97,9 +123,8 @@ type BTPData struct {
 	messages []*BTPMessageCenterMessage
 }
 
-func (o *client) WatchHeader(ctx context.Context, number *big.Int, channel chan<- *types.Header) error {
+func (o *Client) WatchHeader(ctx context.Context, number *big.Int, channel chan<- *types.Header) error {
 	go func() {
-		retry := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -108,16 +133,10 @@ func (o *client) WatchHeader(ctx context.Context, number *big.Int, channel chan<
 				if head, err := o.Client.HeaderByNumber(ctx, number); err != nil {
 					if err == ethereum.NotFound {
 						time.Sleep(3 * time.Second)
-					} else {
-						if retry < 3 {
-							retry++
-							o.log.Errorf("fail to fetch header - retry(%d) number(%d) err(%+v)", retry, number.Uint64(), err)
-							continue
-						}
-						panic(fmt.Sprintf("fail to fetching header - error(%+v)", err))
+					} else if err != nil {
+						o.log.Panicln(err.Error())
 					}
 				} else {
-					retry = 0
 					number.Add(number, big.NewInt(1))
 					channel <- head
 				}
@@ -127,7 +146,7 @@ func (o *client) WatchHeader(ctx context.Context, number *big.Int, channel chan<
 	return nil
 }
 
-func (o *client) MessagesByBlockHash(ctx context.Context, hash common.Hash) ([]*BTPMessageCenterMessage, error) {
+func (o *Client) MessagesByBlockHash(ctx context.Context, hash common.Hash) ([]*BTPMessageCenterMessage, error) {
 	head, err := o.HeaderByHash(ctx, hash)
 	if err != nil {
 		return nil, err
@@ -155,7 +174,7 @@ const (
 	maxQueryRange = 2048
 )
 
-func (o *client) MessageBySequence(opts *bind.FilterOpts, sequence uint64) (*BTPMessageCenterMessage, error) {
+func (o *Client) MessageBySequence(opts *bind.FilterOpts, sequence uint64) (*BTPMessageCenterMessage, error) {
 	sp, ep := opts.Start, *opts.End
 	if ep-opts.Start > maxQueryRange {
 		sp = ep - maxQueryRange
@@ -189,7 +208,7 @@ func (o *client) MessageBySequence(opts *bind.FilterOpts, sequence uint64) (*BTP
 	}
 }
 
-func (o *client) MessagesAfterSequence(opts *bind.FilterOpts, sequence uint64) ([]*BTPMessageCenterMessage, error) {
+func (o *Client) MessagesAfterSequence(opts *bind.FilterOpts, sequence uint64) ([]*BTPMessageCenterMessage, error) {
 	sp, ep := opts.Start, *opts.End
 	if ep-opts.Start > maxQueryRange {
 		sp = ep - maxQueryRange

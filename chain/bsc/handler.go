@@ -169,7 +169,7 @@ type MessageTx interface {
 	Raw() *btp.RelayResult
 }
 
-func newMessageTx(id int, from string, client *client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
+func newMessageTx(id int, from string, client *Client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
 	return &CreatedMessage{
 		log:    log,
 		id:     id,
@@ -184,7 +184,7 @@ type CreatedMessage struct {
 	log    log.Logger
 	id     int
 	from   string
-	client *client
+	client *Client
 	opts   *bind.TransactOpts
 	blob   []byte
 }
@@ -217,7 +217,7 @@ type PendingMessage struct {
 	log    log.Logger
 	id     int
 	tx     *types.Transaction
-	client *client
+	client *Client
 }
 
 func (o *PendingMessage) Type() MessageType {

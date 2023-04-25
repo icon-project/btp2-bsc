@@ -36,7 +36,7 @@ type sender struct {
 	chainId   *big.Int
 	epoch     uint64
 	height    uint64
-	client    *client
+	client    *Client
 	mutex     sync.RWMutex
 	finality  *Snapshot
 	snapshots *Snapshots
