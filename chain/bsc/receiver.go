@@ -183,6 +183,7 @@ func (o *receiver) loop(height, sequence int64, snap *Snapshot, och chan<- link.
 	// watch new head & messages
 	headCh := make(chan *types.Header)
 	calc := newBlockFinalityCalculator(o.epoch, snap, o.snapshots, o.log)
+	o.log.Tracef("new calculator - addr(%p) number(%d) hash(%s)", calc, snap.Number, snap.Hash.Hex())
 	// rewatch with other height
 	o.client.WatchHeader(context.Background(), big.NewInt(height+1), headCh)
 	nth := uint64(0)
@@ -334,6 +335,9 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 
 	done := false
 	calc := newBlockFinalityCalculator(o.epoch, root, o.snapshots, o.log)
+	o.log.Tracef("new calculator - addr(%p) number(%d) hash(%s)", calc, root.Number, root.Hash.Hex())
+	calc.ensureFeeds(leaf)
+
 	// collect headers to include in block update
 	heads := make([]*types.Header, 0)
 	for leaf.Number < o.status.curnum && !done {

@@ -38,10 +38,10 @@ func (o *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var err error
 	for attempts < 5 {
 		time.Sleep(time.Duration(attempts) * time.Second)
-		if res, err = o.transport.RoundTrip(req); err != nil {
+		if res, err = o.transport.RoundTrip(req.Clone(context.Background())); err != nil {
 			return nil, err
 		} else if res.StatusCode >= 500 {
-			log.Warnf("server faults - code(%d)", res.StatusCode)
+			o.log.Warnf("server faults - code(%d)", res.StatusCode)
 			attempts++
 			continue
 		} else {
@@ -80,8 +80,9 @@ func NewClient(endpoint string, from, to btp.BtpAddress, log log.Logger) *Client
 	switch u.Scheme {
 	case "http", "https":
 		if rc, err = rpc.DialHTTPWithClient(endpoint, &http.Client{
-			Transport: &tolerant{
+			Transport: &transport{
 				transport: http.DefaultTransport,
+				log:       o.log,
 			},
 		}); err != nil {
 			panic(err)

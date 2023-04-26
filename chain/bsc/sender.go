@@ -41,8 +41,6 @@ type sender struct {
 	finality  *Snapshot
 	snapshots *Snapshots
 	log       log.Logger
-	pending   chan *relayResult
-	executed  chan *relayResult
 	wallet    wallet.Wallet
 	handler   *MessageTxHandler
 }
@@ -63,10 +61,7 @@ func NewSender(config SenderConfig, wallet wallet.Wallet, log log.Logger) btp.Se
 		epoch:   config.Epoch,
 		wallet:  wallet,
 		log:     log,
-
-		client:   NewClient(config.Endpoint, config.DstAddress, config.SrcAddress, log),
-		pending:  make(chan *relayResult, 128),
-		executed: make(chan *relayResult, 128),
+		client:  NewClient(config.Endpoint, config.DstAddress, config.SrcAddress, log),
 	}
 	o.snapshots = newSnapshots(o.chainId, o.client.Client, CacheSize, nil, log)
 	o.handler = newMessageTxHandler(o.snapshots, o.log)
@@ -118,6 +113,7 @@ func (o *sender) watchBlockFinalities() {
 	number := new(big.Int).SetUint64(o.finality.Number + uint64(1))
 	snap := o.finality
 	calc := newBlockFinalityCalculator(o.epoch, o.finality, o.snapshots, o.log)
+	o.log.Tracef("new calculator - addr(%p) number(%d) hash(%s)", calc, o.finality.Number, o.finality.Hash.Hex())
 	var err error
 	o.client.WatchHeader(context.Background(), number, headCh)
 	for {
