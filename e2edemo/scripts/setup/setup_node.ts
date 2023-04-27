@@ -4,7 +4,7 @@ import {Chain, Gov} from "../icon/system";
 
 const {CI_WORKFLOW} = process.env
 const {IconAmount} = IconService;
-const iconNetwork = IconNetwork.getNetwork('icon:private');
+const iconNetwork = IconNetwork.getNetwork('icon0');
 const chain = new Chain(iconNetwork);
 const gov = new Gov(iconNetwork);
 const prepAddress = iconNetwork.wallet.getAddress()

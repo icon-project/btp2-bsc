@@ -80,8 +80,8 @@ async function headByNumber(number: number) {
     return await ethers.provider.send('eth_getHeaderByNumber', ['0x' + number.toString(16)]);
 }
 
-async function genJavBmvParams(bmc: string) {
-  const curnum = await ethers.provider.getBlockNumber()
+async function genJavBmvParams(bmc: string, number: number) {
+  const curnum = number != undefined ? number : await ethers.provider.getBlockNumber();
   const tarnum = curnum - curnum % EPOCH;
   console.log('trusted block number:', tarnum);
   const curr = await headByNumber(tarnum);
@@ -101,7 +101,6 @@ async function genJavBmvParams(bmc: string) {
   return {
       bmc: bmc,
       chainId: '0x' + (await ethers.provider.getNetwork()).chainId.toString(16),
-      epoch: '0x' + EPOCH.toString(16),
       header: Buffer.from(rlp.encode([
         curr.parentHash,
         curr.sha3Uncles,
@@ -141,11 +140,6 @@ async function deploy_bmv_sol(src: string, dst: string, srcChain: any, dstChain:
   await bmvBtp.deployed()
   srcChain.contracts.bmv = bmvBtp.address
   console.log(`${dst}: BMV: deployed to ${bmvBtp.address}`);
-
-  // update deployments
-  deployments.set(src, srcChain);
-  deployments.set(dst, dstChain);
-  deployments.save();
 }
 
 async function setup_link_icon(src: string, srcChain:any, dstChain: any) {
@@ -213,6 +207,10 @@ async function setup_link_sol(src: string, srcChain: any, dstChain: any) {
   console.log('srcChain:', srcChain, 'dstChain:', dstChain);
   await deploy_bmv_sol(src, dst, srcChain, dstChain);
   await deploy_bmv_jav(dst, src, dstChain, srcChain, await genJavBmvParams(dstChain.contracts.bmc));
+  // update deployments
+  deployments.set(src, srcChain);
+  deployments.set(dst, dstChain);
+  deployments.save();
 
   await setup_link_icon(dst, dstChain, srcChain);
   await setup_link_sol(src, srcChain, dstChain);
