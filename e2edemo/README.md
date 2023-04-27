@@ -79,14 +79,8 @@ If no build errors were found, then you can deploy all the contracts using the f
 ```
 make deploy-all
 ```
-> **Note**
-> By default, above command uses BMV for BTPBlock.
-> If you want to use BMV for Bridge, add `BMV_BRIDGE=true` environment variable as follows.
-> ```
-> BMV_BRIDGE=true make deploy-all
-> ```
 
-All contracts (BMC, BMV, xCall and DApp) have now been successfully deployed and linked on both the ICON and Hardhat chains.
+All contracts (BMC, BMV, xCall and DApp) have now been successfully deployed and linked on both the ICON and BSC chains.
 The generated file, `deployments.json`, contains information needed to interact with the relays,
 such as contract addresses and the network address of each chain.
 
