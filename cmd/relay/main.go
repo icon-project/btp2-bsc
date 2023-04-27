@@ -42,7 +42,7 @@ var (
 )
 
 const (
-	DefaultKeyStorePass = "btp2"
+	DefaultKeyStorePass = ""
 	BothDirection       = "both"
 	FrontDirection      = "front"
 	ReverseDirection    = "reverse"
