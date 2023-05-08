@@ -3,6 +3,7 @@ package bsc
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -196,8 +197,9 @@ func (o *CreatedMessage) Type() MessageType {
 }
 
 func (o *CreatedMessage) Transit() MessageTx {
+	o.log.Tracef("CreatedMessage blob(%s)", hex.EncodeToString(o.blob))
 	if tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob); err != nil {
-		o.log.Debugf("MessageTransition(C->D) ID(%d)", o.id)
+		o.log.Debugf("MessageTransition(C->D) ID(%d) Err(%s)", o.id, err.Error())
 		return &DroppedMessage{
 			id:  o.id,
 			err: err,
@@ -302,6 +304,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 			id:     o.id,
 			number: o.receipt.BlockNumber.Uint64(),
 			hash:   o.receipt.BlockHash,
+			tx:     o.receipt.TxHash,
 			err:    nil,
 			log:    o.log,
 		}
@@ -330,6 +333,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 			id:     o.id,
 			number: o.receipt.BlockNumber.Uint64(),
 			hash:   o.receipt.BlockHash,
+			tx:     o.receipt.TxHash,
 			err:    err,
 			log:    o.log,
 		}
@@ -356,6 +360,7 @@ type ExecutedMessage struct {
 	id     int
 	number uint64
 	hash   common.Hash
+	tx     common.Hash
 	err    error
 }
 
@@ -364,7 +369,7 @@ func (o *ExecutedMessage) Type() MessageType {
 }
 
 func (o *ExecutedMessage) Transit() MessageTx {
-	o.log.Debugf("MessageTransition(EE->FN) ID(%d) Tx(%s)", o.id, o.hash.Hex())
+	o.log.Debugf("MessageTransition(EE->FN) ID(%d) Tx(%s)", o.id, o.tx.Hex())
 	return &FinalizedMessage{
 		o,
 	}

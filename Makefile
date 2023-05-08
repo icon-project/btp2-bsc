@@ -3,6 +3,7 @@
 # 	Makefile for building target binaries.
 #
 
+SHELL:=/usr/bin/env sh
 # Configuration
 BUILD_ROOT = $(abspath ./)
 BIN_DIR = ./bin
@@ -10,10 +11,14 @@ LINUX_BIN_DIR = ./build/linux
 
 GOBUILD = go build
 GOBUILD_TAGS =
-GOBUILD_ENVS = CGO_ENABLED=0
+GOBUILD_ENVS = CGO_ENABLED=1
 GOBUILD_LDFLAGS =
 GOBUILD_FLAGS = -tags "$(GOBUILD_TAGS)" -ldflags "$(GOBUILD_LDFLAGS)"
 GOBUILD_ENVS_LINUX = $(GOBUILD_ENVS) GOOS=linux GOARCH=amd64
+
+GOCC := CC=$(shell go env CC)
+GOCXX := CXX=$(shell go env CXX)
+UNAME := $(shell uname -m)
 
 GOTEST = go test
 GOTEST_FLAGS = -test.short
@@ -38,11 +43,15 @@ $(BIN_DIR)/$(1) $(1) :
 	    -o $(BIN_DIR)/$(1) ./cmd/$(1)
 $(LINUX_BIN_DIR)/$(1) $(1)-linux : GOBUILD_LDFLAGS+=$$($(1)_LDFLAGS)
 $(LINUX_BIN_DIR)/$(1) $(1)-linux :
+ifeq ($(UNAME), arm64)
+	$(eval GOCC = CC=x86_64-linux-musl-gcc)
+	$(eval GOCXX = CXX=x86_64-linux-musl-g++)
+endif
 	@ \
 	rm -f $(LINUX_BIN_DIR)/$(1) ; \
 	echo "[#] go build ./cmd/$(1)"
 	$$(GOBUILD_ENVS_LINUX) \
-	go build $$(GOBUILD_FLAGS) \
+	$(GOCC) $(GOCXX) go build $$(GOBUILD_FLAGS) \
 	    -o $(LINUX_BIN_DIR)/$(1) ./cmd/$(1)
 endef
 $(foreach M,$(CMDS),$(eval $(call CMD_template,$(M))))

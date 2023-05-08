@@ -80,6 +80,62 @@ async function headByNumber(number: number) {
     return await ethers.provider.send('eth_getHeaderByNumber', ['0x' + number.toString(16)]);
 }
 
+async function genJavBmvParamsForLuban(bmc: string, number: number) {
+  const curnum = number != undefined ? number : await ethers.provider.getBlockNumber();
+  const tarnum = curnum - curnum % EPOCH;
+  console.log('trusted block number:', tarnum);
+  const curr = await headByNumber(tarnum);
+  const prev = tarnum != 0 ? await headByNumber(tarnum - EPOCH) : curr;
+  const extra = prev.extraData;
+  const valBytes = validatorBytes(extra);
+  let validators = [];
+  for (let i = 0; i < valBytes.length / ValidatorBytesLengthLuban; i++) {
+      validators.push('0x' + valBytes.slice(i*ValidatorBytesLengthLuban, i*ValidatorBytesLengthLuban + EthAddrLength).toString('hex'));
+  }
+
+  const recents = [];
+  for (let i = Math.floor(validators.length / 2); i >= 0; i--) {
+      recents.push((await ethers.provider.getBlock(tarnum-i)).miner);
+  }
+
+  return {
+      bmc: bmc,
+      chainId: '0x' + (await ethers.provider.getNetwork()).chainId.toString(16),
+      header: Buffer.from(rlp.encode([
+        curr.parentHash,
+        curr.sha3Uncles,
+        curr.miner,
+        curr.stateRoot,
+        curr.transactionsRoot,
+        curr.receiptsRoot,
+        curr.logsBloom,
+        curr.difficulty,
+        curr.number,
+        curr.gasLimit,
+        curr.gasUsed,
+        curr.timestamp,
+        curr.extraData,
+        curr.mixHash,
+        curr.nonce
+      ])).toString('hex'),
+      recents: recents,
+      validators: validators
+  }
+}
+const BlsPubLenth = 48;
+const EthAddrLength = 20;
+const ValidatorBytesLengthLuban = EthAddrLength + BlsPubLenth;
+const ExtraVanity = 32;
+const ValidatorNumberSize = 1;
+
+function validatorBytes(extra) {
+    let ebuf = Buffer.from(extra.slice(2, extra.length), 'hex');
+    let valnum = ebuf[ExtraVanity];
+    let start = ExtraVanity + ValidatorNumberSize;
+    let end = start + valnum * ValidatorBytesLengthLuban;
+    return ebuf.slice(start, end);
+}
+
 async function genJavBmvParams(bmc: string, number: number) {
   const curnum = number != undefined ? number : await ethers.provider.getBlockNumber();
   const tarnum = curnum - curnum % EPOCH;
@@ -205,8 +261,10 @@ async function setup_link_sol(src: string, srcChain: any, dstChain: any) {
   await open_btp_network(dst, src, dstChain);
 
   console.log('srcChain:', srcChain, 'dstChain:', dstChain);
+  let params = await genJavBmvParamsForLuban(dstChain.contracts.bmc);
+  console.log('bmv deployment args:', params);
   await deploy_bmv_sol(src, dst, srcChain, dstChain);
-  await deploy_bmv_jav(dst, src, dstChain, srcChain, await genJavBmvParams(dstChain.contracts.bmc));
+  await deploy_bmv_jav(dst, src, dstChain, srcChain, params);
   // update deployments
   deployments.set(src, srcChain);
   deployments.set(dst, dstChain);

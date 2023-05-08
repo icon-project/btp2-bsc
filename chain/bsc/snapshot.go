@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	validatorBytesLength = common.AddressLength
+	validatorBytesLength = common.AddressLength + types.BLSPublicKeyLength
 	extraVanity          = 32 // Fixed number of extra-data prefix bytes reserved for signer vanity
 	extraSeal            = 65 // Fixed number of extra-data suffix bytes reserved for signer seal
+	epoch                = 200
 )
 
 // validatorsAscending implements the sort interface to allow sorting a list of addresses
@@ -215,7 +216,7 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 	}
 	snap.Recents[number] = validator
 
-	if number > 0 && number%uint64(200) == uint64(len(snap.Validators)/2) {
+	if number > 0 && number%uint64(epoch) == uint64(len(snap.Validators)/2) {
 		oldLimit := len(snap.Validators)/2 + 1
 		newLimit := len(snap.Candidates)/2 + 1
 		if newLimit < oldLimit {
@@ -226,9 +227,8 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 		snap.Validators = snap.Candidates
 	}
 
-	if number > 0 && number%uint64(200) == 0 {
-		validatorBytes := head.Extra[extraVanity : len(head.Extra)-extraSeal]
-		newValArr, err := ParseValidators(validatorBytes)
+	if number > 0 && number%uint64(epoch) == 0 {
+		newValArr, err := ParseValidators(head)
 		if err != nil {
 			return nil, err
 		}
@@ -262,18 +262,47 @@ func (s *Snapshot) validators() []common.Address {
 	return validators
 }
 
-func ParseValidators(validatorsBytes []byte) ([]common.Address, error) {
-	if len(validatorsBytes)%validatorBytesLength != 0 {
+func ParseValidators(header *types.Header) ([]common.Address, error) {
+	validatorsBytes := getValidatorBytesFromHeader(header)
+	if len(validatorsBytes) == 0 {
 		return nil, errors.New("invalid validators bytes")
 	}
+
 	n := len(validatorsBytes) / validatorBytesLength
-	result := make([]common.Address, n)
+	cnsAddrs := make([]common.Address, n)
 	for i := 0; i < n; i++ {
-		address := make([]byte, validatorBytesLength)
-		copy(address, validatorsBytes[i*validatorBytesLength:(i+1)*validatorBytesLength])
-		result[i] = common.BytesToAddress(address)
+		cnsAddrs[i] = common.BytesToAddress(validatorsBytes[i*validatorBytesLength : i*validatorBytesLength+common.AddressLength])
 	}
-	return result, nil
+	return cnsAddrs, nil
+}
+
+// getValidatorBytesFromHeader returns the validators bytes extracted from the header's extra field if exists.
+// The validators bytes would be contained only in the epoch block's header, and its each validator bytes length is fixed.
+// On luban fork, we introduce vote attestation into the header's extra field, so extra format is different from before.
+// Before luban fork: |---Extra Vanity---|---Validators Bytes (or Empty)---|---Extra Seal---|
+// After luban fork:  |---Extra Vanity---|---Validators Number and Validators Bytes (or Empty)---|---Vote Attestation (or Empty)---|---Extra Seal---|
+func getValidatorBytesFromHeader(header *types.Header) []byte {
+	if len(header.Extra) <= extraVanity+extraSeal {
+		return nil
+	}
+
+	// if !chainConfig.IsLuban(header.Number) {
+	// 	if header.Number.Uint64()%parliaConfig.Epoch == 0 && (len(header.Extra)-extraSeal-extraVanity)%validatorBytesLengthBeforeLuban != 0 {
+	// 		return nil
+	// 	}
+	// 	return header.Extra[extraVanity : len(header.Extra)-extraSeal]
+	// }
+
+	if header.Number.Uint64()%epoch != 0 {
+		return nil
+	}
+	num := int(header.Extra[extraVanity])
+	if num == 0 || len(header.Extra) <= extraVanity+extraSeal+num*validatorBytesLength {
+		return nil
+	}
+	start := extraVanity + 1
+	end := start + num*validatorBytesLength
+	return header.Extra[start:end]
 }
 
 // func FindAncientHeader(header *types.Header, ite uint64, chain consensus.ChainHeaderReader, candidateParents []*types.Header) *types.Header {
@@ -307,12 +336,6 @@ func FindAncientHeader(header *types.Header, ite uint64, candidateParents []*typ
 // ecrecover extracts the ethereum account address from a signed header.
 // func ecrecover(header *types.Header, sigCache *lru.ARCCache, chainId *big.Int) (common.Address, error) {
 func ecrecover(header *types.Header, chainId *big.Int) (common.Address, error) {
-	// If the signature's already cached, return that
-	// hash := header.Hash()
-	// if address, known := sigCache.Get(hash); known {
-	// 	return address.(common.Address), nil
-	// }
-	// Retrieve the signature from the header extra-data
 	if len(header.Extra) < extraSeal {
 		return common.Address{}, errors.New("errMissingSignature")
 	}
@@ -325,8 +348,6 @@ func ecrecover(header *types.Header, chainId *big.Int) (common.Address, error) {
 	}
 	var signer common.Address
 	copy(signer[:], crypto.Keccak256(pubkey[1:])[12:])
-
-	// sigCache.Add(hash, signer)
 	return signer, nil
 }
 
@@ -364,7 +385,7 @@ func encodeSigHeader(w io.Writer, header *types.Header, chainId *big.Int) {
 }
 
 func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, log log.Logger) (*Snapshot, error) {
-	curVals, err := ParseValidators(head.Extra[extraVanity : len(head.Extra)-extraSeal])
+	curVals, err := ParseValidators(head)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +401,7 @@ func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, lo
 		return nil, err
 	}
 
-	oldVals, err := ParseValidators(oldHead.Extra[extraVanity : len(oldHead.Extra)-extraSeal])
+	oldVals, err := ParseValidators(oldHead)
 	if err != nil {
 		return nil, err
 	}
