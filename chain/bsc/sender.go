@@ -2,10 +2,8 @@ package bsc
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/big"
-	"runtime"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -121,22 +119,22 @@ func (o *sender) watchBlockFinalities() {
 		case head := <-headCh:
 			snap, err = snap.apply(head, o.chainId)
 			if err != nil {
-				panic(err.Error())
+				o.log.Panicln(err.Error())
 			}
 
 			if err = o.snapshots.add(snap); err != nil {
-				panic(err.Error())
+				o.log.Panicln(err.Error())
 			}
 
 			if fnzs, err := calc.feed(snap.Hash); err != nil {
-				panic(err.Error())
+				o.log.Panicln(err.Error())
 			} else {
 				if len(fnzs) <= 0 {
 					break
 				}
 				fn, err := o.snapshots.get(fnzs[len(fnzs)-1])
 				if err != nil {
-					panic(err.Error())
+					o.log.Panicln(err.Error())
 				}
 				o.log.Tracef("new block finality - number(%d) hash(%s)", fn.Number, fn.Hash.Hex())
 				o.handler.SetNewFinality(fn)
@@ -193,9 +191,4 @@ func (o *sender) GetMarginForLimit() int64 {
 
 func (o *sender) TxSizeLimit() int {
 	return txSizeLimit
-}
-
-func TODO(m string) {
-	_, filename, line, _ := runtime.Caller(1)
-	panic(fmt.Sprintf("TODO:) %s : %d : %s\n", filename, line, m))
 }

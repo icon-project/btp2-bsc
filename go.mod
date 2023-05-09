@@ -13,13 +13,13 @@ go 1.19
 require (
 	github.com/ethereum/go-ethereum v1.11.3
 	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d
-	github.com/icon-project/btp2 v1.0.1-0.20230426075430-c2d221fde34f
+	github.com/icon-project/btp2 v1.0.1-0.20230508062001-3658ebfb3db2
 	github.com/spf13/cobra v1.6.1
 	golang.org/x/crypto v0.5.0
+	golang.org/x/exp v0.0.0-20230206171751-46f607a40771
 )
 
 require (
-	github.com/AndreasBriese/bbloom v0.0.0-20190825152654-46b345b51c96 // indirect
 	github.com/VictoriaMetrics/fastcache v1.12.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bnb-chain/ics23 v0.1.0 // indirect
@@ -33,7 +33,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/deckarep/golang-set v1.8.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.1.0 // indirect
-	github.com/dgraph-io/badger v1.6.2 // indirect
 	github.com/dgraph-io/ristretto v0.0.4-0.20210318174700-74754f61e018 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/edsrzf/mmap-go v1.1.0 // indirect
@@ -55,7 +54,6 @@ require (
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/gtank/merlin v0.1.1 // indirect
-	github.com/haltingstate/secp256k1-go v0.0.0-20151224084235-572209b26df6 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/herumi/bls-eth-go-binary v0.0.0-20210917013441-d37c07cfda4e // indirect
 	github.com/holiman/bloomfilter/v2 v2.0.3 // indirect

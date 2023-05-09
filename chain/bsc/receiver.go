@@ -10,10 +10,10 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"golang.org/x/exp/slices"
 
 	lru "github.com/hashicorp/golang-lru"
 
-	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
@@ -79,13 +79,13 @@ func NewReceiver(config RecvConfig, log log.Logger) *receiver {
 	}
 
 	if cache, err := lru.NewARC(CacheSize); err != nil {
-		panic(err)
+		o.log.Panicf("fail to create lru head cache - size(%d) err(%s)", CacheSize, err.Error())
 	} else {
 		o.heads = cache
 	}
 
 	if cache, err := lru.NewARC(CacheSize); err != nil {
-		panic(err)
+		o.log.Panicf("fail to create lru msg cache - size(%d) err(%s)", CacheSize, err.Error())
 	} else {
 		o.msgs = cache
 	}
@@ -102,10 +102,12 @@ func NewReceiver(config RecvConfig, log log.Logger) *receiver {
 			o.log.Panicf("fail to get bucket - err(%s)\n", err.Error())
 		} else {
 			o.accumulator = mta.NewExtAccumulator([]byte(AccStateKey), bucket, int64(o.start))
-			if bucket.Has([]byte(AccStateKey)) {
+			if ok, err := bucket.Has([]byte(AccStateKey)); ok {
 				if err = o.accumulator.Recover(); err != nil {
 					o.log.Panicf("fail to recover accumulator - err(%s)", err.Error())
 				}
+			} else if err != nil {
+				o.log.Panicf("fail to access bucket - err(%s)", err.Error())
 			}
 			o.log.Infof("Current accumulator height(%d) offset(%d)\n",
 				o.accumulator.Height(), o.accumulator.Offset())
@@ -195,15 +197,15 @@ func (o *receiver) loop(height, sequence int64, snap *Snapshot, och chan<- link.
 			var err error
 			// records block snapshot
 			if snap, err = snap.apply(head, o.chainId); err != nil {
-				panic(err.Error())
+				o.log.Panicln(err.Error())
 			}
 			if err = o.snapshots.add(snap); err != nil {
-				panic(err.Error())
+				o.log.Panicln(err.Error())
 			}
 
 			fnzs, err := calc.feed(snap.Hash)
 			if err != nil {
-				panic(err.Error())
+				o.log.Panicln(err.Error())
 			}
 
 			var finnum, sequence *big.Int
@@ -211,7 +213,7 @@ func (o *receiver) loop(height, sequence int64, snap *Snapshot, och chan<- link.
 				for _, fnz := range fnzs {
 					head, err := o.client.HeaderByHash(context.Background(), fnz)
 					if err != nil {
-						panic(err)
+						o.log.Panicln(err)
 					}
 					finnum = head.Number
 					o.heads.Add(head.Number.Uint64(), head)
@@ -219,7 +221,7 @@ func (o *receiver) loop(height, sequence int64, snap *Snapshot, och chan<- link.
 					msgs, err := o.client.MessagesByBlockHash(context.Background(), fnz)
 					if err != nil {
 						// TODO
-						panic(err)
+						o.log.Panicln(err)
 					}
 
 					if len(msgs) > 0 {
@@ -300,6 +302,43 @@ func (o *receiver) GetHeightForSeq(sequence int64) int64 {
 	}
 }
 
+func (o *receiver) findCanonicalBlock(rootNumber uint64, blks *BlockTree) *Snapshot {
+	number := rootNumber + 1
+	leaf, err := o.snapshots.get(blks.Root())
+	if err != nil {
+		o.log.Panicf("fail to fetch root snapshot - number(%d) hash(%s) err(%s)",
+			rootNumber, blks.Root().Hex(), err.Error())
+	}
+
+	for {
+		children := blks.ChildrenOf(leaf.Hash)
+		if len(children) <= 0 {
+			return leaf
+		}
+
+		head, err := o.headerByNumber(context.Background(), number)
+		if err != nil {
+			o.log.Errorf("no such header - number(%d) err(%s)", number, err.Error())
+			return leaf
+		}
+
+		hash := head.Hash()
+		if ok := slices.ContainsFunc(children, func(child common.Hash) bool {
+			return bytes.Equal(child.Bytes(), hash.Bytes())
+		}); !ok {
+			return leaf
+		} else {
+			var err error
+			if leaf, err = o.snapshots.get(hash); err != nil {
+				o.log.Panicf("fail to load snapshot - number(%d) hash(%s) err(%s)",
+					number, hash.Hex(), err.Error())
+			}
+			number++
+			continue
+		}
+	}
+}
+
 func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]link.BlockUpdate, error) {
 	o.log.Tracef("++Recv:BuildBlockUpdate(%d, %d, %d)", status.Verifier.Height, status.RxSeq, limit)
 	defer o.log.Tracef("--Recv:BuildBlockUpdate(%d, %d, %d)", status.Verifier.Height, status.RxSeq, limit)
@@ -318,20 +357,8 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 	}
 
 	// find block to start updating
-	var leaf *Snapshot
-	for i := 0; i < len(blks.Nodes()) && leaf == nil; i++ {
-		leaf, err = o.snapshots.get(blks.Nodes()[i])
-		if err != nil {
-			if err == ethereum.NotFound {
-				continue
-			}
-			return nil, err
-		}
-	}
-
-	if leaf == nil {
-		panic("InconsistentChain")
-	}
+	leaf := o.findCanonicalBlock(finnum, blks)
+	o.log.Debugf("leaf number(%d) hash(%s)", leaf.Number, leaf.Hash.Hex())
 
 	done := false
 	calc := newBlockFinalityCalculator(o.epoch, root, o.snapshots, o.log)
@@ -343,18 +370,18 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 	for leaf.Number < o.status.curnum && !done {
 		head, err := o.headerByNumber(context.Background(), leaf.Number+1)
 		if err != nil {
-			o.log.Errorf("fail to fetching header - number(%d) err(%s)\n", leaf.Number, err.Error())
+			o.log.Errorf("fail to fetching header - number(%d) err(%s)", leaf.Number, err.Error())
 			return nil, err
 		}
 
 		snap, err := o.snapshots.get(head.Hash())
 		if err != nil {
-			panic(fmt.Sprintf("NoSnapshot - number(%d) hash(%d) err(%s)\n",
-				head.Number.Uint64(), head.Hash().Hex(), err.Error()))
+			o.log.Panicf("NoSnapshot - number(%d) hash(%d) err(%s)",
+				head.Number.Uint64(), head.Hash().Hex(), err.Error())
 		}
 		if !bytes.Equal(snap.ParentHash.Bytes(), leaf.Hash.Bytes()) {
-			panic(fmt.Sprintf("InconsistentChain - expected(%s) actual(%s) number(%d)\n",
-				snap.ParentHash.Hex(), leaf.Hash.Hex(), leaf.Number))
+			o.log.Panicf("InconsistentChain - expected(%s) actual(%s) number(%d)",
+				snap.ParentHash.Hex(), leaf.Hash.Hex(), leaf.Number)
 		}
 
 		size := int64(math.Ceil(float64(head.Size())))
@@ -368,8 +395,8 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 
 		// update extra status of verifier
 		if err := blks.Add(snap.ParentHash, snap.Hash); err != nil {
-			panic(fmt.Sprintf("fail to update block tree - parent(%s) hash(%s) err(%s)\n",
-				snap.ParentHash.Hex(), snap.Hash.Hex(), err.Error()))
+			o.log.Panicf("fail to update block tree - parent(%s) hash(%s) err(%s)",
+				snap.ParentHash.Hex(), snap.Hash.Hex(), err.Error())
 		}
 
 		// calculate newly finalized blocks with a supplied block
@@ -660,27 +687,27 @@ func (o *receiver) prepare() error {
 	o.log.Debugf("prepare receiver")
 	number := big.NewInt(o.accumulator.Offset())
 	if number.Uint64()%o.epoch != 0 {
-		panic(fmt.Sprintf("Must be epoch block: epoch: %d number: %d\n", number.Uint64(), o.epoch))
+		o.log.Panicf("Must be epoch block: epoch: %d number: %d", number.Uint64(), o.epoch)
 	}
 	head, err := o.client.HeaderByNumber(context.Background(), number)
 	if err != nil {
-		o.log.Errorf("fail to fetching header: number(%d) error(%s)\n", number.Uint64(), err.Error())
+		o.log.Errorf("fail to fetching header: number(%d) error(%s)", number.Uint64(), err.Error())
 		return err
 	}
 
 	// No initial trusted block hash
 	if o.accumulator.Len() <= 0 {
-		o.log.Infof("accumulate initial block hash: hash(%s)\n", head.Hash().Hex())
+		o.log.Infof("accumulate initial block hash: hash(%s)", head.Hash().Hex())
 		o.accumulator.AddHash(head.Hash().Bytes())
 		if err := o.accumulator.Flush(); err != nil {
-			o.log.Errorln("fail to flush accumulator: err(%s)\n", err.Error())
+			o.log.Errorln("fail to flush accumulator: err(%s)", err.Error())
 			return err
 		}
 	}
 
 	ok, err := hasSnapshot(o.database, head.Hash())
 	if err != nil {
-		o.log.Errorln("fail to check snapshot existent: err(%s)\n", err.Error())
+		o.log.Errorln("fail to check snapshot existent: err(%s)", err.Error())
 		return err
 	}
 
@@ -785,7 +812,7 @@ func (s srcStatus) Seq() int64 {
 func ToVerifierStatus(blob []byte) *VerifierStatus {
 	vs := &VerifierStatus{}
 	if err := rlp.DecodeBytes(blob, vs); err != nil {
-		panic(fmt.Sprintf("fail to decode verifier status - blob(%s) err(%s)",
+		panic(fmt.Sprintf("fail to decode verifier status - blob(%s) err(%s)\n",
 			hex.EncodeToString(blob), err.Error()))
 	}
 	return vs

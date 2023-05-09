@@ -104,23 +104,11 @@ func (o *BlockTree) Root() common.Hash {
 	return o.root
 }
 
-func (o *BlockTree) Nodes() []common.Hash {
-	nodes := append(make([]common.Hash, 0), o.root)
-	ret := make([]common.Hash, len(o.nodes))
-
-	var target common.Hash
-	i := len(o.nodes) - 1
-	for len(nodes) > 0 {
-		target = nodes[0]
-		nodes = nodes[1:]
-		if len(o.nodes[target]) > 0 {
-			nodes = append(nodes, o.nodes[target]...)
-		}
-		ret[i] = target
-		i--
-	}
-
-	return ret
+func (o *BlockTree) ChildrenOf(parent common.Hash) []common.Hash {
+	children := o.nodes[parent]
+	clone := make([]common.Hash, len(children))
+	copy(clone, children)
+	return clone
 }
 
 func (o *BlockTree) Add(parent, hash common.Hash) error {

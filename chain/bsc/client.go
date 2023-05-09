@@ -73,7 +73,7 @@ func NewClient(endpoint string, from, to btp.BtpAddress, log log.Logger) *Client
 
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		panic(err)
+		o.log.Panicf("fail to parse endpoint - endpoint(%s) err(%s)", endpoint, err.Error())
 	}
 
 	var rc *rpc.Client
@@ -85,17 +85,17 @@ func NewClient(endpoint string, from, to btp.BtpAddress, log log.Logger) *Client
 				log:       o.log,
 			},
 		}); err != nil {
-			panic(err)
+			o.log.Panicf("fail to make rpc connection based on http(s) - endpoint(%s) err(%s)", endpoint, err.Error())
 		}
 	default:
 		if rc, err = rpc.DialContext(context.Background(), endpoint); err != nil {
-			panic(err)
+			o.log.Panicf("fail to make rpc connection - endpoint(%s) err(%s)", endpoint, err.Error())
 		}
 	}
 
 	o.Client = ethclient.NewClient(rc)
 	if bmc, err := NewBTPMessageCenter(common.HexToAddress(from.Account()), o.Client); err != nil {
-		panic(err)
+		o.log.Panicf("fail to create bmc proxy - address(%s) err(%s)", from.Account(), err.Error())
 	} else {
 		o.BTPMessageCenter = bmc
 	}

@@ -44,7 +44,6 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 	// on cache memory
 	if snap, ok := o.cache.Get(id); ok {
 		s := snap.(*Snapshot)
-		o.log.Tracef("hit cache - number(%d) hash(%s)", s.Number, s.Hash.Hex())
 		return s, nil
 	}
 
@@ -55,7 +54,6 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 		if snap, err := loadSnapshot(o.database, id, o.log); err != nil {
 			return nil, err
 		} else {
-			o.log.Tracef("hit storage - number(%d) hash(%s)", snap.Number, snap.Hash.Hex())
 			return snap, nil
 		}
 	}
@@ -69,7 +67,6 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 		panic("fail to fetching snapshots")
 	} else {
 		s := snap.(*Snapshot)
-		o.log.Tracef("hit network - number(%d) hash(%s)", s.Number, s.Hash.Hex())
 		return s, nil
 	}
 }

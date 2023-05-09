@@ -154,7 +154,7 @@ func hasSnapshot(database db.Database, hash common.Hash) (bool, error) {
 	if bucket, err := database.GetBucket("Snapshot"); err != nil {
 		return false, err
 	} else {
-		return bucket.Has(append([]byte("snap-"), hash[:]...)), nil
+		return bucket.Has(append([]byte("snap-"), hash[:]...))
 	}
 }
 
