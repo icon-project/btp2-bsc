@@ -1,6 +1,3 @@
-[submodule "icon-sdk-java"]
-	path = icon-sdk-java
-	url = https://github.com/icon-project/icon-sdk-java.git
 [submodule "javascore"]
 	path = javascore
 	url = https://github.com/icon-project/btp2-java.git
