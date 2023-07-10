@@ -132,7 +132,7 @@ func (o *BlockTree) Prune(until common.Hash) {
 		for _, removal := range removals {
 			leaves, _ := o.nodes[removal]
 			for _, leaf := range leaves {
-				if !bytes.Equal(leaf.Bytes(), until.Bytes()) {
+				if leaf != until {
 					buf = append(buf, leaf)
 				}
 			}

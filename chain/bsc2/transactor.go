@@ -1,7 +1,6 @@
 package bsc
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -55,31 +54,32 @@ func (o MessageType) String() string {
 	}
 }
 
-type MessageTxHandler struct {
+type MessageTransactor struct {
 	snapshots  *Snapshots
-	log        log.Logger
 	replies    chan<- *btp.RelayResult
-	finalities chan *Snapshot
+	finalities chan common.Hash
 	transition chan MessageTx
-	m          sync.Mutex
+	mu         sync.Mutex
 	waitings   []MessageTx
+	log        log.Logger
 }
 
-func newMessageTxHandler(snapshots *Snapshots, log log.Logger) *MessageTxHandler {
-	return &MessageTxHandler{
+func newMessageTransactor(snapshots *Snapshots, log log.Logger) *MessageTransactor {
+	return &MessageTransactor{
 		snapshots:  snapshots,
 		log:        log,
-		finalities: make(chan *Snapshot),
-		transition: make(chan MessageTx, 1),
+		finalities: make(chan common.Hash),
+		transition: make(chan MessageTx, 128),
 		waitings:   make([]MessageTx, 0),
 	}
 }
 
-func (o *MessageTxHandler) Busy() bool {
-	return len(o.transition) == cap(o.transition) || len(o.waitings) == 128
+func (o *MessageTransactor) Busy() bool {
+	// return len(o.transition) == cap(o.transition) || len(o.waitings) == 1
+	return len(o.transition) == cap(o.transition)
 }
 
-func (o *MessageTxHandler) SetNewFinality(finality *Snapshot) {
+func (o *MessageTransactor) NotifyFinality(finality common.Hash) {
 	o.finalities <- finality
 }
 
@@ -90,7 +90,7 @@ func (o *MessageTxHandler) SetNewFinality(finality *Snapshot) {
 // C -> P -> E -> D
 // C -> P -> E -> F
 // C -> P -> E -> W -> nil
-func (o *MessageTxHandler) Run(replies chan<- *btp.RelayResult) {
+func (o *MessageTransactor) Run(replies chan<- *btp.RelayResult) {
 	o.replies = replies
 	for {
 		select {
@@ -102,7 +102,7 @@ func (o *MessageTxHandler) Run(replies chan<- *btp.RelayResult) {
 			}()
 		case finality := <-o.finalities:
 			go func() {
-				o.m.Lock()
+				o.mu.Lock()
 				k := 0
 				for _, msg := range o.waitings {
 					if msg = o.tryFinalizeInLock(finality, msg); msg.Type() == Executed {
@@ -113,13 +113,13 @@ func (o *MessageTxHandler) Run(replies chan<- *btp.RelayResult) {
 					}
 				}
 				o.waitings = o.waitings[:k]
-				o.m.Unlock()
+				o.mu.Unlock()
 			}()
 		}
 	}
 }
 
-func (o *MessageTxHandler) Send(msg MessageTx) {
+func (o *MessageTransactor) Send(msg MessageTx) {
 	typ := msg.Type()
 	if typ == Faulted || typ == Dropped || typ == Executed || typ == Finalized {
 		o.replies <- msg.Raw()
@@ -131,35 +131,39 @@ func (o *MessageTxHandler) Send(msg MessageTx) {
 
 	if impl, ok := msg.(*ExecutedMessage); ok {
 		if impl.err == nil {
-			o.m.Lock()
+			o.mu.Lock()
 			o.waitings = append(o.waitings, msg)
-			o.m.Unlock()
+			o.mu.Unlock()
 		}
 	}
 }
 
-func (o *MessageTxHandler) tryFinalizeInLock(finality *Snapshot, msg MessageTx) MessageTx {
+func (o *MessageTransactor) tryFinalizeInLock(finality common.Hash, msg MessageTx) MessageTx {
 	exec, ok := msg.(*ExecutedMessage)
 	if !ok {
-		panic(fmt.Sprintf("ForbiddenMessage:%s", msg.Type()))
+		o.log.Panicf("ForbiddenMessage(%s)", msg.Type())
 	}
 
-	snap := finality
+	snap, err := o.snapshots.get(finality)
+	if err != nil {
+		o.log.Panicln(err.Error())
+	}
+
 	if exec.number > snap.Number {
 		return exec
 	}
-	var err error
 	for exec.number < snap.Number {
 		if snap, err = o.snapshots.get(snap.ParentHash); err != nil {
-			o.log.Panicf(err.Error())
+			o.log.Panicln(err.Error())
 		}
 	}
-	if !bytes.Equal(exec.hash.Bytes(), snap.Hash.Bytes()) {
+	if exec.hash != snap.Hash {
 		o.log.Debugf("MessageTransition(EE->D)")
 		return &DroppedMessage{
 			id:   exec.id,
 			err:  errors.New("TxDropped"),
 			prev: exec.Type(),
+			log:  o.log,
 		}
 	}
 	return exec.Transit()
@@ -172,7 +176,7 @@ type MessageTx interface {
 }
 
 func newMessageTx(id int, from string, client *Client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
-	log.Debugf("new message tx - id(%d)", id)
+	log.Infof("NewMessage - ID(%d) FROM(%s)", id, from)
 	return &CreatedMessage{
 		log:    log,
 		id:     id,
@@ -197,26 +201,39 @@ func (o *CreatedMessage) Type() MessageType {
 }
 
 func (o *CreatedMessage) Transit() MessageTx {
-	o.log.Tracef("CreatedMessage blob(%s)", hex.EncodeToString(o.blob))
-	if tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob); err != nil {
-		o.log.Debugf("MessageTransition(C->D) ID(%d) Err(%s)", o.id, err.Error())
-		return &DroppedMessage{
-			id:  o.id,
-			err: err,
-		}
-	} else {
-		o.log.Debugf("MessageTransition(C->P) ID(%d) Tx(%s)", o.id, tx.Hash().Hex())
-		return &PendingMessage{
-			log:    o.log,
-			id:     o.id,
-			tx:     tx,
-			client: o.client,
+	if o.opts.GasLimit != uint64(0) {
+		o.log.Panicf("TODO Supports CustomGasLimit")
+	}
+	for ErrCounter := 0; ; ErrCounter++ {
+		tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob)
+		if err != nil {
+			if ErrCounter >= 3 {
+				o.log.Warnf("MessageTransition(C->D) ID(%d) Blob(%s) Err(%s)",
+					o.id, hex.EncodeToString(o.blob), err.Error())
+				return &DroppedMessage{
+					id:  o.id,
+					err: err,
+					log: o.log,
+				}
+			}
+			o.log.Debugf("Retry to estimate gas limit - attempt(%d) err(%s)", ErrCounter, err.Error())
+			time.Sleep(time.Second * 2)
+			continue
+		} else {
+			o.log.Debugf("MessageTransition(C->P) ID(%d) Tx(%s)", o.id, tx.Hash().Hex())
+			return &PendingMessage{
+				log:    o.log,
+				id:     o.id,
+				tx:     tx,
+				client: o.client,
+			}
 		}
 	}
 }
 
 func (o *CreatedMessage) Raw() *btp.RelayResult {
-	panic("Unsupported")
+	o.log.Panicln("Unsupported")
+	return nil
 }
 
 type PendingMessage struct {
@@ -231,7 +248,8 @@ func (o *PendingMessage) Type() MessageType {
 }
 
 func (o *PendingMessage) Raw() *btp.RelayResult {
-	panic("Unsupported")
+	o.log.Panicln("Unsupported")
+	return nil
 }
 
 func (o *PendingMessage) Transit() MessageTx {
@@ -243,45 +261,46 @@ func (o *PendingMessage) Transit() MessageTx {
 		time.Sleep(time.Duration(attempt*2) * time.Second)
 		_, pending, err = o.client.TransactionByHash(context.Background(), hash)
 		if err == ethereum.NotFound {
-			o.log.Warnf("message dropped - hash(%s)", hash.Hex())
-			o.log.Debugf("MessageTransition(P->D) ID(%d) Tx(%s)", o.id, hash.Hex())
+			o.log.Warnf("MessageTransition(P->D) ID(%d) Tx(%s)", o.id, hash.Hex())
 			return &DroppedMessage{
 				id:   o.id,
 				err:  errors.New("DroppedByTxPool"),
 				prev: o.Type(),
+				log:  o.log,
 			}
 		} else if err != nil {
-			o.log.Errorf("fail to query transaction - hash(%s) err(%s)", hash.Hex(), err.Error())
-			o.log.Debugf("MessageTransition(P->F) ID(%d) Tx(%s)", o.id, hash.Hex())
+			o.log.Warnf("MessageTransition(P->F) ID(%d) Tx(%s)", o.id, hash.Hex(), err.Error())
 			return &FaultedMessage{
 				id:   o.id,
 				err:  errors.New("TxQueryFailure"),
 				prev: o.Type(),
+				log:  o.log,
 			}
 		}
 		attempt++
 	}
 
 	if pending {
-		o.log.Debugf("MessageTransition(P->F) ID(%d) Tx(%s)", o.id, hash.Hex())
+		o.log.Warnf("MessageTransition(P->F) ID(%d) Tx(%s) Err(Timeout)", o.id, hash.Hex())
 		return &FaultedMessage{
 			id:  o.id,
 			err: errors.New(fmt.Sprintf("TxPoolTimeout:%s", hash.Hex())),
+			log: o.log,
 		}
 	}
 
 	receipt, err := o.client.TransactionReceipt(context.Background(), hash)
 	if err != nil {
-		o.log.Errorf("fail to fetch receipt - hash(%s)", hash.Hex())
-		o.log.Debugf("MessageTransition(P->F) ID(%d) Tx(%s)", o.id, hash.Hex())
+		o.log.Warnf("MessageTransition(P->F) ID(%d) Tx(%s) Err(NoReceipt)", o.id, hash.Hex())
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("ReceiptQueryFailure"),
 			prev: o.Type(),
+			log:  o.log,
 		}
 	}
 
-	o.log.Debugf("MessageTransition(P->E) ID(%d) Tx(%s)", o.id, hash.Hex())
+	o.log.Infof("MessageTransition(P->E) ID(%d) Tx(%s)", o.id, hash.Hex())
 	return &ExecutingMessage{
 		PendingMessage: o,
 		receipt:        receipt,
@@ -299,7 +318,7 @@ func (o *ExecutingMessage) Type() MessageType {
 
 func (o *ExecutingMessage) Transit() MessageTx {
 	if o.receipt.Status == types.ReceiptStatusSuccessful {
-		o.log.Debugf("MessageTransition(E->EE) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Infof("MessageTransition(E->EE) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &ExecutedMessage{
 			id:     o.id,
 			number: o.receipt.BlockNumber.Uint64(),
@@ -312,11 +331,12 @@ func (o *ExecutingMessage) Transit() MessageTx {
 
 	from, err := types.Sender(types.NewEIP155Signer(o.tx.ChainId()), o.tx)
 	if err != nil {
-		o.log.Debugf("MessageTransition(E->F) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Errorf("MessageTransition(E->F) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("TxSenderRecoveryFailure"),
 			prev: o.Type(),
+			log:  o.log,
 		}
 	}
 
@@ -328,7 +348,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 		Value:    o.tx.Value(),
 		Data:     o.tx.Data(),
 	}, o.receipt.BlockNumber); err != nil {
-		o.log.Debugf("MessageTransition(E->EE) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Infof("MessageTransition(E->EE) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &ExecutedMessage{
 			id:     o.id,
 			number: o.receipt.BlockNumber.Uint64(),
@@ -338,17 +358,19 @@ func (o *ExecutingMessage) Transit() MessageTx {
 			log:    o.log,
 		}
 	} else {
-		o.log.Debugf("MessageTransition(E->F) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Warnf("MessageTransition(E->F) ID(%d) Tx(%s) Err(EmulRevertFailure)", o.id, o.tx.Hash().Hex())
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("EmulRevertFailure"),
 			prev: o.Type(),
+			log:  o.log,
 		}
 	}
 }
 
 func (o *ExecutingMessage) Raw() *btp.RelayResult {
-	panic("Unuspported")
+	o.log.Panicln("Unuspported")
+	return nil
 }
 
 func (o *ExecutingMessage) Status() uint64 {
@@ -369,10 +391,8 @@ func (o *ExecutedMessage) Type() MessageType {
 }
 
 func (o *ExecutedMessage) Transit() MessageTx {
-	o.log.Debugf("MessageTransition(EE->FN) ID(%d) Tx(%s)", o.id, o.tx.Hex())
-	return &FinalizedMessage{
-		o,
-	}
+	o.log.Infof("MessageTransition(EE->FN) ID(%d) Tx(%s)", o.id, o.tx.Hex())
+	return &FinalizedMessage{o}
 }
 
 func (o *ExecutedMessage) Raw() *btp.RelayResult {
@@ -396,6 +416,7 @@ func (o *FinalizedMessage) Type() MessageType {
 }
 
 func (o *FinalizedMessage) Transit() MessageTx {
+	o.log.Debugf("MessageTransition(FN->Nil)")
 	return nil
 }
 
@@ -409,6 +430,7 @@ type DroppedMessage struct {
 	id   int
 	err  error
 	prev MessageType
+	log  log.Logger
 }
 
 func (o *DroppedMessage) Type() MessageType {
@@ -416,6 +438,7 @@ func (o *DroppedMessage) Type() MessageType {
 }
 
 func (o *DroppedMessage) Transit() MessageTx {
+	o.log.Debugf("MessageTransition(D->Nil)")
 	return nil
 }
 
@@ -431,6 +454,7 @@ type FaultedMessage struct {
 	id   int
 	err  error
 	prev MessageType
+	log  log.Logger
 }
 
 func (o *FaultedMessage) Type() MessageType {
@@ -438,6 +462,7 @@ func (o *FaultedMessage) Type() MessageType {
 }
 
 func (o *FaultedMessage) Transit() MessageTx {
+	o.log.Debugf("MessageTransition(F->Nil)")
 	return nil
 }
 

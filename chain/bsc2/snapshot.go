@@ -26,6 +26,7 @@ const (
 	extraVanity          = 32 // Fixed number of extra-data prefix bytes reserved for signer vanity
 	extraSeal            = 65 // Fixed number of extra-data suffix bytes reserved for signer seal
 	epoch                = 200
+	validatorNumberSize  = 1 // Fixed number of extra prefix bytes reserved for validator number after Luban
 )
 
 // validatorsAscending implements the sort interface to allow sorting a list of addresses
@@ -38,14 +39,15 @@ func (s validatorsAscending) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 type Snapshot struct {
 	// config // epoch
 
-	Number     uint64                      `json:"number"`
-	Hash       common.Hash                 `json:"hash"`
-	ParentHash common.Hash                 `json:"parent_hash"`
-	Sealer     common.Address              `json:"sealer"`
-	Validators map[common.Address]struct{} `json:"validators"`
-	Candidates map[common.Address]struct{} `json:"candidates"`
-	Recents    map[uint64]common.Address   `json:"recents"`
-	log        log.Logger
+	Number      uint64                      `json:"number"`
+	Hash        common.Hash                 `json:"hash"`
+	ParentHash  common.Hash                 `json:"parent_hash"`
+	Sealer      common.Address              `json:"sealer"`
+	Validators  map[common.Address]struct{} `json:"validators"`
+	Candidates  map[common.Address]struct{} `json:"candidates"`
+	Recents     map[uint64]common.Address   `json:"recents"`
+	Attestation *types.VoteData             `json:"attestation"`
+	log         log.Logger
 }
 
 // newSnapshot creates a new snapshot with the specified startup parameters. This
@@ -57,6 +59,7 @@ func newSnapshot(
 	validators []common.Address,
 	candidates []common.Address,
 	recents []common.Address,
+	attestation *types.VoteData,
 	sealer common.Address,
 	parentHash common.Hash,
 	log log.Logger,
@@ -80,36 +83,13 @@ func newSnapshot(
 	for i, v := range recents {
 		snap.Recents[number-uint64(len(recents)-1-i)] = v
 	}
-
+	snap.Attestation = &types.VoteData{
+		SourceNumber: attestation.SourceNumber,
+		SourceHash:   attestation.SourceHash,
+		TargetNumber: attestation.TargetNumber,
+		TargetHash:   attestation.TargetHash,
+	}
 	return snap
-}
-
-func (s *Snapshot) String() string {
-	var b bytes.Buffer
-	b.WriteString("Snapshot{")
-	b.WriteString(fmt.Sprintf("Number: %d ", s.Number))
-	b.WriteString(fmt.Sprintf("Hash: %s ", s.Hash.Hex()))
-	b.WriteString(fmt.Sprintf("ParentHash: %s ", s.ParentHash.Hex()))
-	b.WriteString("Validators: [ ")
-	for k, _ := range s.Validators {
-		b.WriteString(fmt.Sprintf(" %s ", k.Hex()))
-	}
-	b.WriteString(" ] ")
-
-	b.WriteString("Candidates: [")
-	for k, _ := range s.Candidates {
-		b.WriteString(fmt.Sprintf(" %s", k.Hex()))
-	}
-	b.WriteString(" ] ")
-
-	b.WriteString("Recents: [")
-	for k, v := range s.Recents {
-		b.WriteString(fmt.Sprintf(" {%d %s}", k, v.Hex()))
-	}
-	b.WriteString(" ] ")
-	b.WriteString(fmt.Sprintf("Sealer: %s ", s.Sealer.Hex()))
-	b.WriteString("}")
-	return b.String()
 }
 
 // store inserts the snapshot into the database.
@@ -180,7 +160,45 @@ func (s *Snapshot) copy() *Snapshot {
 	for block, v := range s.Recents {
 		cpy.Recents[block] = v
 	}
+	if s.Attestation != nil {
+		cpy.Attestation = &types.VoteData{
+			SourceNumber: s.Attestation.SourceNumber,
+			SourceHash:   s.Attestation.SourceHash,
+			TargetNumber: s.Attestation.TargetNumber,
+			TargetHash:   s.Attestation.TargetHash,
+		}
+	}
 	return cpy
+}
+
+func (s *Snapshot) updateAttestation(header *types.Header) {
+	// The attestation should have been checked in verify header, update directly
+	atte, _ := getVoteAttestationFromHeader(header)
+	if atte == nil {
+		s.log.Infof("NoVoteAttestation - H(%d:%.8s)", header.Number.Uint64(), header.Hash().Hex())
+		return
+	}
+
+	tn, th := atte.Data.TargetNumber, atte.Data.TargetHash
+	sn, sh := atte.Data.SourceNumber, atte.Data.SourceHash
+	s.log.Tracef("Attestation - H(%d:%.8s) T(%d:%.8s) S(%d:%.8s)",
+		header.Number.Uint64(), header.Hash().Hex(), tn, th.Hex(), sn, sh.Hex())
+
+	// Headers with bad attestation are accepted before Plato upgrade,
+	// but Attestation of snapshot is only updated when the target block is direct parent of the header
+	if th != header.ParentHash || tn+1 != header.Number.Uint64() {
+		s.log.Warnf("InvalidVoteAttestation - Expected(%d:%.8s) Actual(%d:%.8s)",
+			header.Number.Uint64()-1, header.ParentHash.Hex(), tn, th.Hex())
+		return
+	}
+
+	// Update attestation
+	if s.Attestation != nil && sn+1 != tn {
+		s.Attestation.TargetNumber = tn
+		s.Attestation.TargetHash = th
+	} else {
+		s.Attestation = atte.Data
+	}
 }
 
 // TODO handle recent fork hash
@@ -192,9 +210,10 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 	if s.Number+1 != head.Number.Uint64() {
 		return nil, errors.New("Out of range block")
 	}
-	if !bytes.Equal(s.Hash.Bytes(), head.ParentHash.Bytes()) {
-		return nil, errors.New(fmt.Sprintf("Inconsistent Block Hash - curr(%d:%s) next(%d:%s:%s)",
-			s.Number, s.Hash.Hex(), head.Number.Uint64(), head.ParentHash.Hex(), head.Hash()))
+	if s.Hash != head.ParentHash {
+		s.log.Infof("inconsistent block hash - curr(%d:%s) next(%d:%s:%s)",
+			s.Number, s.Hash.Hex(), head.Number.Uint64(), head.ParentHash.Hex(), head.Hash())
+		return nil, ErrInconsistentBlock
 	}
 
 	snap := s.copy()
@@ -228,7 +247,7 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 	}
 
 	if number > 0 && number%uint64(epoch) == 0 {
-		newValArr, err := ParseValidators(head)
+		newValArr, err := parseValidators(head)
 		if err != nil {
 			return nil, err
 		}
@@ -238,6 +257,7 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 		}
 		snap.Candidates = newVals
 	}
+	snap.updateAttestation(head)
 	snap.Number += uint64(1)
 	snap.Hash = head.Hash()
 	snap.ParentHash = head.ParentHash
@@ -262,7 +282,21 @@ func (s *Snapshot) validators() []common.Address {
 	return validators
 }
 
-func ParseValidators(header *types.Header) ([]common.Address, error) {
+// func ParseValidators(header *types.Header) ([]common.Address, error) {
+// 	validatorsBytes := getValidatorBytesFromHeader(header)
+// 	if len(validatorsBytes) == 0 {
+// 		return nil, errors.New("invalid validators bytes")
+// 	}
+//
+// 	n := len(validatorsBytes) / validatorBytesLength
+// 	cnsAddrs := make([]common.Address, n)
+// 	for i := 0; i < n; i++ {
+// 		cnsAddrs[i] = common.BytesToAddress(validatorsBytes[i*validatorBytesLength : i*validatorBytesLength+common.AddressLength])
+// 	}
+// 	return cnsAddrs, nil
+// }
+
+func parseValidators(header *types.Header) ([]common.Address /*, []types.BLSPublicKey*/, error) {
 	validatorsBytes := getValidatorBytesFromHeader(header)
 	if len(validatorsBytes) == 0 {
 		return nil, errors.New("invalid validators bytes")
@@ -270,8 +304,10 @@ func ParseValidators(header *types.Header) ([]common.Address, error) {
 
 	n := len(validatorsBytes) / validatorBytesLength
 	cnsAddrs := make([]common.Address, n)
+	//voteAddrs := make([]types.BLSPublicKey, n)
 	for i := 0; i < n; i++ {
 		cnsAddrs[i] = common.BytesToAddress(validatorsBytes[i*validatorBytesLength : i*validatorBytesLength+common.AddressLength])
+		//copy(voteAddrs[i][:], validatorsBytes[i*validatorBytesLength+common.AddressLength:(i+1)*validatorBytesLength])
 	}
 	return cnsAddrs, nil
 }
@@ -285,13 +321,6 @@ func getValidatorBytesFromHeader(header *types.Header) []byte {
 	if len(header.Extra) <= extraVanity+extraSeal {
 		return nil
 	}
-
-	// if !chainConfig.IsLuban(header.Number) {
-	// 	if header.Number.Uint64()%parliaConfig.Epoch == 0 && (len(header.Extra)-extraSeal-extraVanity)%validatorBytesLengthBeforeLuban != 0 {
-	// 		return nil
-	// 	}
-	// 	return header.Extra[extraVanity : len(header.Extra)-extraSeal]
-	// }
 
 	if header.Number.Uint64()%epoch != 0 {
 		return nil
@@ -385,14 +414,20 @@ func encodeSigHeader(w io.Writer, header *types.Header, chainId *big.Int) {
 }
 
 func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, log log.Logger) (*Snapshot, error) {
-	curVals, err := ParseValidators(head)
+	curVals, err := parseValidators(head)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO null attestation
+	attestation, err := getVoteAttestationFromHeader(head)
 	if err != nil {
 		return nil, err
 	}
 
 	if head.Number.Uint64() == 0 {
 		return newSnapshot(head.Number.Uint64(), head.Hash(), curVals, curVals,
-			make([]common.Address, 0), head.Coinbase, head.ParentHash, log), nil
+			make([]common.Address, 0), nil, head.Coinbase, head.ParentHash, log), nil
 	}
 
 	number := new(big.Int).SetUint64(head.Number.Uint64() - epoch)
@@ -401,7 +436,7 @@ func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, lo
 		return nil, err
 	}
 
-	oldVals, err := ParseValidators(oldHead)
+	oldVals, err := parseValidators(oldHead)
 	if err != nil {
 		return nil, err
 	}
@@ -415,5 +450,30 @@ func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, lo
 		}
 	}
 	return newSnapshot(head.Number.Uint64(), head.Hash(), oldVals,
-		curVals, recents, head.Coinbase, head.ParentHash, log), nil
+		curVals, recents, attestation.Data, head.Coinbase, head.ParentHash, log), nil
+}
+
+func getVoteAttestationFromHeader(header *types.Header) (*types.VoteAttestation, error) {
+	if len(header.Extra) <= extraVanity+extraSeal {
+		return nil, nil
+	}
+
+	var attestationBytes []byte
+	if header.Number.Uint64()%epoch != 0 {
+		attestationBytes = header.Extra[extraVanity : len(header.Extra)-extraSeal]
+	} else {
+		num := int(header.Extra[extraVanity])
+		if len(header.Extra) <= extraVanity+extraSeal+validatorNumberSize+num*validatorBytesLength {
+			return nil, nil
+		}
+		start := extraVanity + validatorNumberSize + num*validatorBytesLength
+		end := len(header.Extra) - extraSeal
+		attestationBytes = header.Extra[start:end]
+	}
+
+	var attestation types.VoteAttestation
+	if err := rlp.Decode(bytes.NewReader(attestationBytes), &attestation); err != nil {
+		return nil, fmt.Errorf("block %d has vote attestation info, decode err: %s", header.Number.Uint64(), err)
+	}
+	return &attestation, nil
 }

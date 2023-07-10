@@ -2,7 +2,6 @@ package bsc
 
 import (
 	"context"
-	"fmt"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -99,6 +98,7 @@ func NewClient(endpoint string, from, to btp.BtpAddress, log log.Logger) *Client
 	} else {
 		o.BTPMessageCenter = bmc
 	}
+
 	return o
 }
 
@@ -124,27 +124,26 @@ type BTPData struct {
 	messages []*BTPMessageCenterMessage
 }
 
-func (o *Client) WatchHeader(ctx context.Context, number *big.Int, channel chan<- *types.Header) error {
-	go func() {
+func (o *Client) WatchHeader(ctx context.Context, number *big.Int, headCh chan<- *types.Header) *Subscription {
+	return NewSubscription(func(quit <-chan struct{}) error {
 		for {
 			select {
-			case <-ctx.Done():
-				panic(fmt.Sprintf("TODO:) watch header ctx done - error(%s)\n", ctx.Err()))
+			case <-quit:
+				return nil
 			default:
 				if head, err := o.Client.HeaderByNumber(ctx, number); err != nil {
 					if err == ethereum.NotFound {
 						time.Sleep(3 * time.Second)
 					} else if err != nil {
-						o.log.Panicln(err.Error())
+						return err
 					}
 				} else {
 					number.Add(number, big.NewInt(1))
-					channel <- head
+					headCh <- head
 				}
 			}
 		}
-	}()
-	return nil
+	})
 }
 
 func (o *Client) MessagesByBlockHash(ctx context.Context, hash common.Hash) ([]*BTPMessageCenterMessage, error) {

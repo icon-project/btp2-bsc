@@ -4,7 +4,8 @@ import (
 	"context"
 	"math"
 	"math/big"
-	"sync"
+
+	"github.com/ethereum/go-ethereum/common"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -30,17 +31,15 @@ type relayResult struct {
 }
 
 type sender struct {
-	src, dst  btp.BtpAddress
-	chainId   *big.Int
-	epoch     uint64
-	height    uint64
-	client    *Client
-	mutex     sync.RWMutex
-	finality  *Snapshot
-	snapshots *Snapshots
-	log       log.Logger
-	wallet    wallet.Wallet
-	handler   *MessageTxHandler
+	src, dst   btp.BtpAddress
+	chainId    *big.Int
+	epoch      uint64
+	client     *Client
+	finality   *Snapshot
+	snapshots  *Snapshots
+	log        log.Logger
+	wallet     wallet.Wallet
+	transactor *MessageTransactor
 }
 
 type SenderConfig struct {
@@ -62,8 +61,26 @@ func NewSender(config SenderConfig, wallet wallet.Wallet, log log.Logger) btp.Se
 		client:  NewClient(config.Endpoint, config.DstAddress, config.SrcAddress, log),
 	}
 	o.snapshots = newSnapshots(o.chainId, o.client.Client, CacheSize, nil, log)
-	o.handler = newMessageTxHandler(o.snapshots, o.log)
+	o.transactor = newMessageTransactor(o.snapshots, o.log)
 	return o
+}
+
+func (o *sender) Start() (<-chan *btp.RelayResult, error) {
+	if err := o.prepare(); err != nil {
+		return nil, err
+	}
+
+	replies := make(chan *btp.RelayResult)
+	go o.transactor.Run(replies)
+	go func() {
+		for {
+			if err := recoverable(o.watchBlockFinalities()); err != ErrRecoverable {
+				o.log.Errorf("Fail to watch block finalities - err(%s)", err.Error())
+				break
+			}
+		}
+	}()
+	return replies, nil
 }
 
 func (o *sender) prepare() error {
@@ -74,8 +91,7 @@ func (o *sender) prepare() error {
 	if err != nil {
 		return err
 	}
-	o.log.Infof("latest header - number(%d) hash(%s)\n", latest.Number.Uint64(), latest.Hash().Hex())
-
+	o.log.Infof("Watch from block(%d:%s)", latest.Number.Uint64(), latest.Hash())
 	// the nearest epoch block
 	number := new(big.Int).SetUint64(latest.Number.Uint64() - (latest.Number.Uint64() % o.epoch))
 	head, err := o.client.HeaderByNumber(context.Background(), number)
@@ -95,49 +111,44 @@ func (o *sender) prepare() error {
 	}
 }
 
-func (o *sender) Start() (<-chan *btp.RelayResult, error) {
-	if err := o.prepare(); err != nil {
-		return nil, err
-	}
-
-	replies := make(chan *btp.RelayResult)
-	go o.handler.Run(replies)
-	go o.watchBlockFinalities()
-	return replies, nil
-}
-
-func (o *sender) watchBlockFinalities() {
+func (o *sender) watchBlockFinalities() error {
+	o.log.Debugf("Enter Sender Loop")
 	headCh := make(chan *types.Header)
 	number := new(big.Int).SetUint64(o.finality.Number + uint64(1))
 	snap := o.finality
-	calc := newBlockFinalityCalculator(o.epoch, o.finality, o.snapshots, o.log)
+	calc := newBlockFinalityCalculator(o.finality.Hash, make([]common.Hash, 0), o.snapshots, o.log)
 	o.log.Tracef("new calculator - addr(%p) number(%d) hash(%s)", calc, o.finality.Number, o.finality.Hash.Hex())
 	var err error
-	o.client.WatchHeader(context.Background(), number, headCh)
+	sub := o.client.WatchHeader(context.Background(), number, headCh)
 	for {
 		select {
+		case err := <-sub.Err():
+			return err
 		case head := <-headCh:
 			snap, err = snap.apply(head, o.chainId)
 			if err != nil {
-				o.log.Panicln(err.Error())
+				sub.Unsubscribe()
+				return err
 			}
 
 			if err = o.snapshots.add(snap); err != nil {
-				o.log.Panicln(err.Error())
+				sub.Unsubscribe()
+				return err
 			}
 
 			if fnzs, err := calc.feed(snap.Hash); err != nil {
-				o.log.Panicln(err.Error())
+				sub.Unsubscribe()
+				return err
 			} else {
 				if len(fnzs) <= 0 {
 					break
 				}
 				fn, err := o.snapshots.get(fnzs[len(fnzs)-1])
 				if err != nil {
-					o.log.Panicln(err.Error())
+					sub.Unsubscribe()
+					return err
 				}
-				o.log.Tracef("new block finality - number(%d) hash(%s)", fn.Number, fn.Hash.Hex())
-				o.handler.SetNewFinality(fn)
+				o.transactor.NotifyFinality(fn.Hash)
 				o.finality = fn
 			}
 		}
@@ -145,6 +156,7 @@ func (o *sender) watchBlockFinalities() {
 }
 
 func (o *sender) Stop() {
+	// TODO
 }
 
 func (o *sender) GetStatus() (*btp.BMCLinkStatus, error) {
@@ -173,14 +185,14 @@ func (o *sender) GetStatus() (*btp.BMCLinkStatus, error) {
 }
 
 func (o *sender) Relay(rm btp.RelayMessage) (int, error) {
-	if o.handler.Busy() {
-		return 0, errors.InvalidStateError
+	if o.transactor.Busy() {
+		return 0, errors.ErrInvalidState
 	}
 
 	if opts, err := bind.NewKeyedTransactorWithChainID(o.wallet.(*wallet.EvmWallet).Skey, o.chainId); err != nil {
 		return 0, err
 	} else {
-		o.handler.Send(newMessageTx(rm.Id(), o.src.String(), o.client, opts, rm.Bytes(), o.log))
+		o.transactor.Send(newMessageTx(rm.Id(), o.src.String(), o.client, opts, rm.Bytes(), o.log))
 		return 0, nil
 	}
 }

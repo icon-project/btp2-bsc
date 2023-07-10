@@ -5,7 +5,7 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/icon-project/btp2/bsc/chain/bsc"
+	"github.com/icon-project/btp2/bsc/chain/bsc2"
 	"github.com/icon-project/btp2/chain"
 	"github.com/icon-project/btp2/chain/icon"
 	"github.com/icon-project/btp2/chain/icon/btp2"

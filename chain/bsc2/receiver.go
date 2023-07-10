@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"golang.org/x/exp/slices"
 
 	lru "github.com/hashicorp/golang-lru"
 
@@ -35,6 +36,8 @@ const (
 	AccStateKey        = string("accumulator")
 )
 
+var EmptyHash = common.Hash{}
+
 type RecvConfig struct {
 	ChainID     uint64 `json:"chain_id"`
 	Epoch       uint64 `json:"epoch"`
@@ -47,35 +50,33 @@ type RecvConfig struct {
 }
 
 type receiver struct {
-	start       uint64
 	chainId     *big.Int
 	epoch       uint64
+	startnumber uint64
+
 	client      *Client
 	accumulator *mta.ExtAccumulator
-	cancel      context.CancelFunc
 	database    db.Database
 	snapshots   *Snapshots
 	heads       *lru.ARCCache
 	msgs        *lru.ARCCache
 	mutex       sync.Mutex
-	status      srcStatus
+	peer        *bstatus
+	local       *bstatus
 	cond        *sync.Cond
-	finality    struct {
-		number   uint64
-		sequence uint64
-	}
-	log log.Logger
+	log         log.Logger
 }
 
 func NewReceiver(config RecvConfig, log log.Logger) *receiver {
 	o := &receiver{
-		chainId: new(big.Int).SetUint64(config.ChainID),
-		epoch:   config.Epoch,
-		start:   config.StartNumber,
-		client:  NewClient(config.Endpoint, config.SrcAddress, config.DstAddress, log),
-		status:  srcStatus{},
-		cond:    sync.NewCond(&sync.Mutex{}),
-		log:     log,
+		chainId:     new(big.Int).SetUint64(config.ChainID),
+		epoch:       config.Epoch,
+		startnumber: config.StartNumber,
+		client:      NewClient(config.Endpoint, config.SrcAddress, config.DstAddress, log),
+		local:       &bstatus{},
+		peer:        &bstatus{},
+		cond:        sync.NewCond(&sync.Mutex{}),
+		log:         log,
 	}
 
 	if cache, err := lru.NewARC(CacheSize); err != nil {
@@ -91,7 +92,7 @@ func NewReceiver(config RecvConfig, log log.Logger) *receiver {
 	}
 
 	o.log.Infof("create bsc receiver - chainid(%d), epoch(%d), startnumber(%d)\n",
-		o.chainId.Uint64(), o.epoch, o.start)
+		o.chainId.Uint64(), o.epoch, o.startnumber)
 
 	o.log.Infof("open database - path(%s) type(%s)\n", config.DBPath, string(db.GoLevelDBBackend))
 	if database, err := db.Open(config.DBPath, string(db.GoLevelDBBackend), DBName); err != nil {
@@ -101,7 +102,7 @@ func NewReceiver(config RecvConfig, log log.Logger) *receiver {
 		if bucket, err := database.GetBucket(BucketName); err != nil {
 			o.log.Panicf("fail to get bucket - err(%s)\n", err.Error())
 		} else {
-			o.accumulator = mta.NewExtAccumulator([]byte(AccStateKey), bucket, int64(o.start))
+			o.accumulator = mta.NewExtAccumulator([]byte(AccStateKey), bucket, int64(o.startnumber))
 			if ok, err := bucket.Has([]byte(AccStateKey)); ok {
 				if err = o.accumulator.Recover(); err != nil {
 					o.log.Panicf("fail to recover accumulator - err(%s)", err.Error())
@@ -117,377 +118,432 @@ func NewReceiver(config RecvConfig, log log.Logger) *receiver {
 	return o
 }
 
-func (o *receiver) Start(status *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, error) {
-
-	finnum := status.Verifier.Height
-	finseq := status.RxSeq
-	o.log.Infof("current verifier status - height(%d) rx(%d)\n", finnum, finseq)
-
+func (o *receiver) Start(peer *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, error) {
 	och := make(chan link.ReceiveStatus)
-	o.status = srcStatus{
-		finnum:   uint64(finnum),
-		curnum:   uint64(finnum),
-		sequence: uint64(finseq),
-	}
-	o.finality.number = uint64(finnum)
-	o.finality.sequence = uint64(finseq)
-
-	// ensure initial mta & snapshot
+	o.local = newStatus(peer)
+	o.peer = newStatus(peer)
+	o.log.Infof("peer bmc status - block(%d:%s), sequence(%d)",
+		o.peer.number, o.peer.hash, o.peer.sequence)
+	o.log.Infoln("prepare receiver...")
 	if err := o.prepare(); err != nil {
-		return nil, err
+		o.log.Panicf("fail to prepare receiver - err(%s)", err)
 	}
 
-	// sync mta & snapshots based on peer status
-	fn := big.NewInt(finnum)
-	if err := o.synchronize(fn); err != nil {
-		return nil, err
+	// synchronize local status until finality of peer
+	o.log.Infoln("synchronize receiver status...")
+	if err := o.synchronize(new(big.Int).SetUint64(o.peer.number)); err != nil {
+		o.log.Panicf("fail to synchronize status - err(%s)", err)
 	}
 
-	o.log.Infof("connect to bsc client...")
+	// check node connection
 	if latest, err := o.client.BlockNumber(context.Background()); err != nil {
-		return nil, err
+		o.log.Panicf("fail to connect to node - err(%s)", err)
 	} else {
-		o.log.Infof("latest block number of bsc client - number(%d)", latest)
+		o.log.Infof("latest block number on bsc network - number(%d)", latest)
 	}
 
-	o.log.Infof("fetch missing messages...")
-	e := uint64(finnum)
+	// fetch missing messages
 	if msgs, err := o.client.MessagesAfterSequence(&bind.FilterOpts{
-		Start:   o.start,
-		End:     &e,
+		Start:   o.startnumber,
+		End:     &o.peer.number,
 		Context: context.Background(),
-	}, uint64(finseq)); err != nil {
-		return nil, err
+	}, o.peer.sequence); err != nil {
+		o.log.Panicf("fail to fetch missing messages - err(%s)", err)
 	} else {
-		for _, m := range msgs {
-			o.log.Infof("message - sequence(%d) number(%d) hash(%s)",
-				m.Seq.Uint64(), m.Raw.BlockNumber, m.Raw.BlockHash.Hex())
-			o.msgs.Add(m.Seq.Uint64(), m)
+		for _, msg := range msgs {
+			o.log.Infof("unreached message - block(%d:%s) sequence(%d)", msg.Raw.BlockNumber, msg.Raw.BlockHash.Hex(), msg.Seq.Uint64())
+			o.msgs.Add(msg.Seq.Uint64(), msg)
 		}
 
 		if len(msgs) > 0 {
-			number, sequence := big.NewInt(finnum), msgs[len(msgs)-1].Seq
-			go o.updateAndSendReceiverStatus(number, sequence, nil, och)
+			o.local.sequence = msgs[len(msgs)-1].Seq.Uint64()
+			go func() {
+				o.log.Debugf("notification for unreached messages - status(%d:%s:%d)",
+					o.local.number, o.local.hash, o.local.cache)
+				och <- o.local.clone()
+			}()
 		}
 	}
 
-	blks := ToVerifierStatus(status.Verifier.Extra).BlockTree
-	snap, err := o.snapshots.get(blks.Root())
-	if err != nil {
-		return nil, err
-	}
-
-	go o.loop(finnum, finseq, snap, och)
+	go func() {
+		for {
+			if err := recoverable(o.loop(o.peer.hash, och)); err != ErrRecoverable {
+				o.log.Panicf("Fault Receiver Loop(%s)", err.Error())
+			}
+		}
+	}()
 	return och, nil
 }
 
-func (o *receiver) loop(height, sequence int64, snap *Snapshot, och chan<- link.ReceiveStatus) {
-	// watch new head & messages
+func (o *receiver) recoverable(err error) bool {
+
+	counter := make(map[error]uint64)
+	go func() {
+		ticker := time.NewTicker(time.Second * 60)
+		for t := range ticker.C {
+			o.log.Println("Tick at", t)
+			for _, v := range counter {
+				if v > 10 {
+					o.log.Panicf("Too many same errors(%v)", counter)
+				} else {
+					o.log.Infoln("TICKER~~")
+				}
+			}
+		}
+	}()
+
+	if err == ErrInconsistentBlock {
+		o.log.Warnln("RecoverInconsistentChain")
+		return true
+	} else if err == ErrRecoverable {
+		o.log.Warnln("RecoverableErr")
+		return true
+	}
+	return false
+}
+
+func (o *receiver) applyAndCache(snap *Snapshot, head *types.Header) (*Snapshot, error) {
+	next, err := snap.apply(head, o.chainId)
+	if err != nil {
+		o.log.Warnf("fail to apply snapshot - err(%s)", err)
+		return nil, err
+	}
+	if err := o.snapshots.add(next); err != nil {
+		o.log.Warnf("fail to add snapshot - err(%s)", err)
+		return nil, err
+	}
+
+	o.heads.Add(head.Number.Uint64(), head)
+	return next, nil
+}
+
+func (o *receiver) calcLatestFinality(calc *BlockFinalityCalculator, feed common.Hash) (common.Hash, error) {
+	if finalities, err := calc.feed(feed); err != nil {
+		o.log.Errorf("fail to calculate finality - err(%s)", err)
+		return EmptyHash, err
+	} else if len(finalities) <= 0 {
+		return EmptyHash, nil
+	} else {
+		return finalities[len(finalities)-1], nil
+	}
+}
+
+var ErrInconsistentCount = 0
+
+func (o *receiver) loop(hash common.Hash, och chan<- link.ReceiveStatus) error {
+	o.log.Tracef("StartReceiverLoop")
 	headCh := make(chan *types.Header)
-	calc := newBlockFinalityCalculator(o.epoch, snap, o.snapshots, o.log)
-	o.log.Tracef("new calculator - addr(%p) number(%d) hash(%s)", calc, snap.Number, snap.Hash.Hex())
-	// rewatch with other height
-	o.client.WatchHeader(context.Background(), big.NewInt(height+1), headCh)
-	nth := uint64(0)
+	calc := newBlockFinalityCalculator(hash, make([]common.Hash, 0), o.snapshots, o.log)
+
+	snap, err := o.snapshots.get(hash)
+	if err != nil {
+		o.log.Panicf("NoSnapshot(%s)", hash)
+	}
+	o.log.Infof("InitialFinality - S(%d:%s)", snap.Number, snap.Hash)
+	sub := o.client.WatchHeader(context.Background(), new(big.Int).SetUint64(snap.Number+1), headCh)
+	FeedCounter := uint64(0)
 	for {
 		select {
 		case head := <-headCh:
-			o.log.Tracef("receive new head - number(%d)", head.Number.Uint64())
-			o.waitIfTooAhead(head.Number.Uint64())
+			FeedCounter++
+			o.waitIfFullBuf(head.Number.Uint64())
 			var err error
-			// records block snapshot
-			if snap, err = snap.apply(head, o.chainId); err != nil {
-				o.log.Panicln(err.Error())
-			}
-			if err = o.snapshots.add(snap); err != nil {
-				o.log.Panicln(err.Error())
+			if snap, err = o.applyAndCache(snap, head); err != nil {
+				o.log.Warnf("Fail to apply and cache head - err(%s)", err.Error())
+				sub.Unsubscribe()
+				return err
 			}
 
 			fnzs, err := calc.feed(snap.Hash)
 			if err != nil {
-				o.log.Panicln(err.Error())
+				o.log.Errorf("Fail to calc finality - feed(%s) err(%s)", snap.Hash, err.Error())
+				sub.Unsubscribe()
+				return err
+			} else if len(fnzs) <= 0 {
+				break
 			}
+			final := fnzs[len(fnzs)-1]
+			var number uint64
+			var hash common.Hash
+			if snap, err := o.snapshots.get(final); err != nil {
+				o.log.Panicln(err.Error())
+			} else {
+				// latest finalized block number
+				o.local.cache = snap.Number
 
-			var finnum, sequence *big.Int
-			if len(fnzs) > 0 {
-				for _, fnz := range fnzs {
-					head, err := o.client.HeaderByHash(context.Background(), fnz)
-					if err != nil {
-						o.log.Panicln(err)
-					}
-					finnum = head.Number
-					o.heads.Add(head.Number.Uint64(), head)
+				// To prevent system fault caused by forked block stores past finalized block number
+				// that has been finalized from latest finalized block
+				number = snap.Attestation.SourceNumber
+				hash = snap.Attestation.SourceHash
 
-					msgs, err := o.client.MessagesByBlockHash(context.Background(), fnz)
-					if err != nil {
-						// TODO
-						o.log.Panicln(err)
-					}
-
-					if len(msgs) > 0 {
-						sequence = msgs[len(msgs)-1].Seq
-						for _, msg := range msgs {
-							o.log.Debugf("new message - block number(%d) hash(%s), message sequence(%d)", msg.Raw.BlockNumber, msg.Raw.BlockHash, msg.Seq.Uint64())
-							o.msgs.Add(sequence.Uint64(), msg)
-						}
-					}
+				if number <= o.local.number {
+					break
 				}
 			}
 
-			if sequence != nil || nth%100 == 0 {
-				go o.updateAndSendReceiverStatus(finnum, sequence, new(big.Int).SetUint64(snap.Number), och)
+			if sequence, err := o.queryAndCacheMessages(hash, o.local.hash); err != nil {
+				o.log.Warnf("Fail to fetch and cache messages - err(%s)", err.Error())
+				sub.Unsubscribe()
+				return ErrRecoverable
+			} else {
+				o.updateStatus(number, hash, sequence)
+				if sequence != 0 || FeedCounter > 50 {
+					FeedCounter = 0
+					time.Sleep(time.Second * 2)
+					o.log.Tracef("Notify(%d:%d:%s:%d)",
+						o.local.number, o.local.cache, o.local.hash, o.local.sequence)
+					och <- &bstatus{
+						number:   o.local.number,
+						sequence: o.local.sequence,
+					}
+				}
 			}
-			nth++
+		case err := <-sub.Err():
+			o.log.Warnf("Fail to watching new heads - err(%s)", err)
+			return err
 		}
+	}
+	return nil
+}
+
+func (o *receiver) updateStatus(number uint64, hash common.Hash, sequence uint64) {
+	o.local.number = number
+	o.local.hash = hash
+	if sequence != 0 {
+		o.local.sequence = sequence
 	}
 }
 
-func (o *receiver) updateAndSendReceiverStatus(finnum, sequence, curnum *big.Int, ch chan<- link.ReceiveStatus) {
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-	if curnum != nil && o.status.curnum != curnum.Uint64() {
-		o.status.curnum = curnum.Uint64()
-	}
+func (o *receiver) queryAndCacheMessages(child, ancestor common.Hash) (uint64, error) {
+	var sequence uint64
+	for child != ancestor {
+		ms, err := o.client.MessagesByBlockHash(context.Background(), child)
+		if err != nil {
+			return sequence, err
+		}
 
-	if finnum != nil && o.status.finnum != finnum.Uint64() ||
-		sequence != nil && o.status.sequence != sequence.Uint64() {
-		if finnum != nil {
-			o.status.finnum = finnum.Uint64()
+		for _, m := range ms {
+			s := m.Seq.Uint64()
+			o.log.Infof("NewMessage - M(%d:%d:%.8s)",
+				s, m.Raw.BlockNumber, m.Raw.BlockHash.Hex())
+			o.msgs.Add(s, m)
+			if s != 0 {
+				sequence = s
+			}
 		}
-		if sequence != nil {
-			o.status.sequence = sequence.Uint64()
+
+		if snap, err := o.snapshots.get(child); err != nil {
+			return sequence, err
+		} else {
+			child = snap.ParentHash
 		}
-		o.log.Tracef("send receiver status - number(%d) sequence(%d) monitor(%d)",
-			o.status.finnum, o.status.sequence, o.status.curnum)
-		ch <- o.status
 	}
+	return sequence, nil
 }
 
 func (o *receiver) Stop() {
-	// TODO dispose resources
-	o.cancel()
+	// TODO
 }
 
 func (o *receiver) GetStatus() (link.ReceiveStatus, error) {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
-	return o.status, nil
+	status := &bstatus{
+		number:   o.local.number,
+		sequence: o.local.sequence,
+	}
+	return status, nil
 }
 
 func (o *receiver) GetHeightForSeq(sequence int64) int64 {
-	o.log.Tracef("++Recv::GetHeightForSequence(%d)", sequence)
-	defer o.log.Tracef("--Recv::GetHeightForSequence(%d)", sequence)
+	o.log.Tracef("++GetHeightForSequence(%d)", sequence)
+	defer o.log.Tracef("--GetHeightForSequence(%d)", sequence)
 	if msg, ok := o.msgs.Get(uint64(sequence)); ok {
 		m := msg.(*BTPMessageCenterMessage)
-		o.log.Tracef("from cache - number=(%d)", m.Raw.BlockNumber)
+		o.log.Tracef("message(%d) block(%d:%s)", sequence, m.Raw.BlockNumber, m.Raw.BlockHash)
 		return int64(m.Raw.BlockNumber)
 	}
 
-	e := o.status.curnum
+	o.log.Warnf("no cache message")
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	end := o.local.number
 	if msg, err := o.client.MessageBySequence(&bind.FilterOpts{
-		Start:   o.start,
-		End:     &e,
+		Start:   o.startnumber,
+		End:     &end,
 		Context: context.Background(),
 	}, uint64(sequence)); err != nil {
-		o.log.Errorf("fail to fetch message - err(%s) start(%d) sequence(%d)", err.Error(), o.start, sequence)
+		o.log.Errorf("fail to fetch message - err(%s) start(%d) sequence(%d)", err.Error(), o.startnumber, sequence)
+		return 0
+	} else if msg == nil {
 		return 0
 	} else {
-		if msg == nil {
-			return 0
-		} else {
-			// TODO cache message
-			o.log.Tracef("from network - number=(%d)", msg.Raw.BlockNumber)
-			return int64(msg.Raw.BlockNumber)
-		}
+		o.log.Tracef("found message(%d:%s)", msg.Raw.BlockNumber, msg.Raw.BlockHash)
+		return int64(msg.Raw.BlockNumber)
 	}
 }
 
-func (o *receiver) findCanonicalBlock(rootNumber uint64, blks *BlockTree) *Snapshot {
-	number := rootNumber + 1
-	leaf, err := o.snapshots.get(blks.Root())
-	if err != nil {
-		o.log.Panicf("fail to fetch root snapshot - number(%d) hash(%s) err(%s)",
-			rootNumber, blks.Root().Hex(), err.Error())
-	}
-
+func (o *receiver) selectFork(from common.Hash, blocks *BlockTree) []common.Hash {
+	feeds := make([]common.Hash, 0)
 	for {
-		children := blks.ChildrenOf(leaf.Hash)
+		children := blocks.ChildrenOf(from)
 		if len(children) <= 0 {
-			return leaf
+			break
 		}
 
-		head, err := o.headerByNumber(context.Background(), number)
-		if err != nil {
-			o.log.Errorf("no such header - number(%d) err(%s)", number, err.Error())
-			return leaf
-		}
-
-		hash := head.Hash()
-		if ok := slices.ContainsFunc(children, func(child common.Hash) bool {
-			return bytes.Equal(child.Bytes(), hash.Bytes())
-		}); !ok {
-			return leaf
-		} else {
-			var err error
-			if leaf, err = o.snapshots.get(hash); err != nil {
-				o.log.Panicf("fail to load snapshot - number(%d) hash(%s) err(%s)",
-					number, hash.Hex(), err.Error())
+		var hash common.Hash
+		for _, child := range children {
+			snap, err := o.snapshots.get(child)
+			if err == nil {
+				hash = snap.Hash
+				break
 			}
-			number++
-			continue
+		}
+
+		if hash != EmptyHash {
+			from = hash
+			feeds = append(feeds, hash)
+		} else {
+			break
 		}
 	}
+	return feeds
+}
+
+func (o *receiver) hasMessages(finalities []common.Hash) (bool, error) {
+	for _, finality := range finalities {
+		msgs, err := o.client.MessagesByBlockHash(context.Background(), finality)
+		if err != nil {
+			o.log.Errorf("fail to fetch messages for block(%s) - err(%s)", finality, err)
+			return false, err
+		}
+
+		if len(msgs) > 0 {
+			o.log.Infof("block(%d:%s) contains messages", msgs[0].Raw.BlockNumber, msgs[0].Raw.BlockHash)
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]link.BlockUpdate, error) {
-	o.log.Tracef("++Recv:BuildBlockUpdate(%d, %d, %d)", status.Verifier.Height, status.RxSeq, limit)
-	defer o.log.Tracef("--Recv:BuildBlockUpdate(%d, %d, %d)", status.Verifier.Height, status.RxSeq, limit)
-	finnum := uint64(status.Verifier.Height)
-	blks := ToVerifierStatus(status.Verifier.Extra).BlockTree
-	// accumulate missing finalized block hash
-	root, err := o.snapshots.get(blks.Root())
-	if err != nil {
-		o.log.Errorf("fail to retrieving snapshot of finalized block - number(%d) hash(%s)\n", finnum, blks.Root().Hex())
-		return nil, err
-	} else {
-		if root.Number > uint64(o.accumulator.Height()+1) {
-			o.log.Warnf("sync accmulator height current(%d) -> target(%d)\n", o.accumulator.Height()+1, root.Number)
-
-		}
+	peer := newStatus(status)
+	o.log.Tracef("Build block updates - P(%d:%.8s) L(%d:%d:%.8s)",
+		peer.number, peer.blocks.Root().Hex(), o.local.number, o.local.cache, o.local.hash)
+	defer o.log.Tracef("Done - Build block updates")
+	if _, err := o.snapshots.get(peer.hash); err != nil {
+		o.log.Errorf("No header for finalized block number(%d)", peer.number)
+		return nil, errors.New("NoCachedHeader")
 	}
 
-	// find block to start updating
-	leaf := o.findCanonicalBlock(finnum, blks)
-	o.log.Debugf("leaf number(%d) hash(%s)", leaf.Number, leaf.Hash.Hex())
+	canonical := o.selectFork(peer.hash, peer.blocks)
+	o.log.Tracef("Canonical(%v)", canonical)
+	calc := newBlockFinalityCalculator(peer.hash, canonical, o.snapshots, o.log)
 
-	done := false
-	calc := newBlockFinalityCalculator(o.epoch, root, o.snapshots, o.log)
-	o.log.Tracef("new calculator - addr(%p) number(%d) hash(%s)", calc, root.Number, root.Hash.Hex())
-	calc.ensureFeeds(leaf)
-
-	// collect headers to include in block update
 	heads := make([]*types.Header, 0)
-	for leaf.Number < o.status.curnum && !done {
-		head, err := o.headerByNumber(context.Background(), leaf.Number+1)
-		if err != nil {
-			o.log.Errorf("fail to fetching header - number(%d) err(%s)", leaf.Number, err.Error())
-			return nil, err
-		}
-
-		snap, err := o.snapshots.get(head.Hash())
-		if err != nil {
-			o.log.Panicf("NoSnapshot - number(%d) hash(%d) err(%s)",
-				head.Number.Uint64(), head.Hash().Hex(), err.Error())
-		}
-		if !bytes.Equal(snap.ParentHash.Bytes(), leaf.Hash.Bytes()) {
-			o.log.Panicf("InconsistentChain - expected(%s) actual(%s) number(%d)",
-				snap.ParentHash.Hex(), leaf.Hash.Hex(), leaf.Number)
-		}
-
-		size := int64(math.Ceil(float64(head.Size())))
-		if limit < size*5 {
-			break
+	parent := peer.hash
+	if len(canonical) > 0 {
+		parent = canonical[len(canonical)-1]
+	}
+	finalities := uint64(0)
+	number := peer.number + uint64(len(canonical)) + 1
+	exists := false
+	for number <= o.local.cache && !exists {
+		var head *types.Header
+		if hd, ok := o.heads.Get(number); ok {
+			head = hd.(*types.Header)
 		} else {
-			limit -= size * 5
+			break
+		}
+
+		o.log.Tracef("Head(%d:%.8s:%.8s)", head.Number.Uint64(), head.Hash().Hex(), head.ParentHash.Hex())
+		hash := head.Hash()
+		if parent != head.ParentHash {
+			o.log.Panicf("InconsistentHead - P(%.8s) C(%d:%.8s:%.8s)",
+				parent.Hex(), head.Number.Uint64(), head.Hash().Hex(), head.ParentHash.Hex())
+
+			return nil, errors.New("InconsistentChain")
+		}
+
+		if size := int64(math.Ceil(float64(head.Size()))) * 5; limit >= size {
+			limit -= size
+		} else {
+			break
 		}
 
 		heads = append(heads, head)
-
-		// update extra status of verifier
-		if err := blks.Add(snap.ParentHash, snap.Hash); err != nil {
-			o.log.Panicf("fail to update block tree - parent(%s) hash(%s) err(%s)",
-				snap.ParentHash.Hex(), snap.Hash.Hex(), err.Error())
+		if err := peer.blocks.Add(head.ParentHash, hash); err != nil {
+			o.log.Panicf(err.Error())
 		}
-
-		// calculate newly finalized blocks with a supplied block
-		if fnzs, err := calc.feed(snap.Hash); err != nil {
-			return nil, err
-		} else {
-			// update extra status of verifier
-			if len(fnzs) > 0 {
-				finnum += uint64(len(fnzs))
-				blks.Prune(fnzs[len(fnzs)-1])
-			}
-
-			for _, fnz := range fnzs {
-				if msgs, err := o.client.MessagesByBlockHash(context.Background(), fnz); err != nil {
-					for _, msg := range msgs {
-						o.log.Debugf("message exist in finalized block - number(%s) hash(%s) sequence(%d)",
-							msg.Raw.BlockNumber, msg.Raw.BlockHash, msg.Seq.Uint64())
-						o.msgs.Add(msg.Seq.Uint64(), msg)
-					}
-					done = true
+		if fnzs, err := calc.feed(hash); err != nil {
+			o.log.Panicf("Fail to calculate finality - feed(%s) err(%s)", hash, err)
+		} else if len(fnzs) > 0 {
+			finalities += uint64(len(fnzs))
+			peer.blocks.Prune(fnzs[len(fnzs)-1])
+			for i := 0; i < len(fnzs) && !exists; i++ {
+				if msgs, err := o.client.MessagesByBlockHash(context.Background(), fnzs[i]); err != nil {
+					return nil, err
+				} else if len(msgs) > 0 {
+					exists = true
+					break
 				}
 			}
 		}
-		leaf = snap
+
+		number++
+		parent = hash
 	}
 
 	if len(heads) > 0 {
-		o.log.Debugf("BU{ H(%d) ~ H(%d)}\n", heads[0].Number.Uint64(), heads[len(heads)-1].Number.Uint64())
+		o.log.Infof("BU{ H(%d:%.8s) ~ H(%d:%.8s) F(%d:%.8s) }",
+			heads[0].Number.Uint64(), heads[0].Hash().Hex(),
+			heads[len(heads)-1].Number.Uint64(), heads[len(heads)-1].Hash().Hex(),
+			peer.number+finalities, peer.blocks.Root().Hex())
 		return []link.BlockUpdate{
 			&BlockUpdate{
 				heads:  heads,
-				start:  uint64(status.Verifier.Height + 1),
-				height: finnum,
+				start:  peer.number + 1,
+				height: peer.number + finalities,
 				status: &VerifierStatus{
 					Offset:    uint64(o.accumulator.Offset()),
-					BlockTree: blks,
+					BlockTree: peer.blocks,
 				},
 			},
 		}, nil
-	} else {
-		return []link.BlockUpdate{}, nil
 	}
-}
-
-func (o *receiver) headerByNumber(ctx context.Context, number uint64) (*types.Header, error) {
-	if head, ok := o.heads.Get(number); ok {
-		o.log.Tracef("hit head cache - number(%d)", number)
-		return head.(*types.Header), nil
-	}
-	o.log.Debugf("miss head cache - number(%d)", number)
-	return o.client.HeaderByNumber(ctx, new(big.Int).SetUint64(number))
+	o.log.Tracef("NoAvailableHead")
+	return []link.BlockUpdate{}, nil
 }
 
 func (o *receiver) BuildBlockProof(status *btp.BMCLinkStatus, target int64) (link.BlockProof, error) {
-	o.log.Tracef("++Recv::BuildBlockProof - number(%d) sequence(%d) target(%d)", status.Verifier.Height, status.RxSeq, target)
-	defer o.log.Tracef("--Recv::BuildBlockProof")
-	// Accumulate missing block hashes
-	finnum := status.Verifier.Height
-	o.log.Debugf("current accumulator height(%d), current finalized height(%d)", o.accumulator.Height(), finnum)
+	peer := newStatus(status)
+	o.log.Tracef("Build block proof - P(%d:%.8s:%d)",
+		peer.number, peer.hash, peer.sequence)
+	defer o.log.Tracef("Done - Build block proof")
 
-	if err := o.syncAcc(ToVerifierStatus(status.Verifier.Extra).BlockTree.Root()); err != nil {
+	if err := o.syncAcc(peer.hash); err != nil {
 		return nil, err
 	}
-
-	_, witness, err := o.accumulator.WitnessForAt(target+1, finnum+1, o.accumulator.Offset())
+	_, witness, err := o.accumulator.WitnessForAt(target+1, int64(peer.number+1), o.accumulator.Offset())
 	if err != nil {
-		o.log.Errorf("fail to retrieve witness - error(%s)\n", err.Error())
 		return nil, err
-	}
-
-	hs := mta.WitnessesToHashes(witness)
-	for i, b := range hs {
-		o.log.Debugf("W={%d : %s}", i, hex.EncodeToString(b))
 	}
 
 	if head, err := o.client.HeaderByNumber(context.Background(), big.NewInt(target)); err != nil {
-		o.log.Errorf("fail to fetching header - number(%d) error(%s)\n", target, err.Error())
 		return nil, err
 	} else {
-		o.log.Debugf("BP{ H(%d:%s) N(%d) }", head.Number.Uint64(), head.Hash(), finnum+1)
+		o.log.Infof("BP{ H(%d:%s) }", head.Number.Uint64(), head.Hash())
 		return &BlockProof{
 			Header:    head,
-			AccHeight: uint64(finnum + 1),
+			AccHeight: peer.number + 1,
 			Witness:   mta.WitnessesToHashes(witness),
 		}, nil
 	}
 }
 
 func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (link.MessageProof, error) {
-	o.log.Tracef("++Recv::BuildMessageProof(%d, %d, %d)", status.Verifier.Height, status.RxSeq, limit)
-	defer o.log.Tracef("--Recv::BuildMessageProof")
+	o.log.Tracef("Build message proof - S(%d: %d: %d)", status.Verifier.Height, status.RxSeq, limit)
+	defer o.log.Tracef("Done - Build message proof")
 	sequence := uint64(status.RxSeq)
 	var msgs []*BTPMessageCenterMessage
 	for {
@@ -567,8 +623,8 @@ func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (li
 		})
 	}
 	if msgproof != nil {
-		o.log.Debugf("MP{ hash(%s) nproofs(%d) start sequence(%d)",
-			msgproof.Hash.Hex(), len(msgproof.Proofs), msgproof.sequence)
+		o.log.Debugf("MP{ block(%d:%s) nproofs(%d) start sequence(%d)",
+			msgs[0].Raw.BlockNumber, msgproof.Hash.Hex(), len(msgproof.Proofs), msgproof.sequence)
 	}
 	return msgproof, nil
 }
@@ -602,112 +658,70 @@ func (o *receiver) BuildRelayMessage(parts []link.RelayMessageItem) ([]byte, err
 	}
 }
 
-func (o *receiver) FinalizedStatus(bls <-chan *btp.BMCLinkStatus) {
+func (o *receiver) FinalizedStatus(sch <-chan *btp.BMCLinkStatus) {
 	go func() {
 		for {
 			select {
-			case status := <-bls:
-				o.log.Debugf("on status finalized - number(%d) sequence(%d)",
-					status.Verifier.Height, status.RxSeq)
-				root := ToVerifierStatus(status.Verifier.Extra).BlockTree.Root()
-				if err := o.syncAcc(root); err != nil {
-					o.log.Errorf("fail to sync accumulator - number(%d) hash(%s) accnum(%d)",
-						status.Verifier.Height, root, o.accumulator.Height())
+			case status := <-sch:
+				peer := newStatus(status)
+				if err := o.syncAcc(peer.hash); err != nil {
+					o.log.Errorf("fail to sync accumulator - block(%d:%s) acc(%d)", peer.number, peer.hash, o.accumulator.Height())
 				}
-				o.purgeAndWakeupIfNear(status)
+				o.purgeAndWakeup(peer)
 			}
 		}
 	}()
 }
 
 func (o *receiver) syncAcc(until common.Hash) error {
-	snap, err := o.snapshots.get(until)
+	end, err := o.client.HeaderByHash(context.Background(), until)
 	if err != nil {
 		return err
 	}
 
-	o.log.Debugf("synchronize accumulator... - curr(%d) targ(%d)",
-		o.accumulator.Height(), snap.Number+1)
-
-	hashes := make([]common.Hash, 0)
-	for o.accumulator.Height() <= int64(snap.Number) {
-		hashes = append(hashes, snap.Hash)
-		snap, err = o.snapshots.get(snap.ParentHash)
-		if err != nil {
+	cursor := o.accumulator.Height()
+	for cursor <= end.Number.Int64() {
+		if head, err := o.client.HeaderByNumber(context.Background(), big.NewInt(cursor)); err != nil {
 			return err
+		} else {
+			o.accumulator.AddHash(head.Hash().Bytes())
 		}
+		cursor++
 	}
-	for i := range hashes {
-		o.accumulator.AddHash(hashes[len(hashes)-1-i].Bytes())
-	}
+
 	if err := o.accumulator.Flush(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (o *receiver) waitIfTooAhead(cursor uint64) {
-	o.cond.L.Lock()
-	defer o.cond.L.Unlock()
-	if o.finality.number+CacheSize < cursor {
-		o.log.Debugf("pause block fetching loop - ")
-		o.cond.Wait()
-	}
-}
-
-func (o *receiver) purgeAndWakeupIfNear(newFinality *btp.BMCLinkStatus) {
-	o.log.Traceln("++Recv::purgeAndWakeupIfNear")
-	defer o.log.Traceln("--Recv::purgeAndWakeupIfNear")
-	o.cond.L.Lock()
-	defer o.cond.L.Unlock()
-
-	for i := o.finality.number; i <= uint64(newFinality.Verifier.Height); i++ {
-		o.log.Tracef("purge head cache - (%d)", i)
-		o.heads.Remove(i)
-	}
-
-	for i := o.finality.sequence; i <= uint64(newFinality.RxSeq); i++ {
-		o.log.Tracef("purge msg cache - (%d)", i)
-		o.msgs.Remove(i)
-	}
-
-	if o.finality.number*2/3 < uint64(newFinality.Verifier.Height) {
-		defer func() {
-			o.log.Debugf("resume block fetching loop")
-			o.cond.Broadcast()
-		}()
-	}
-
-	o.finality.number = uint64(newFinality.Verifier.Height)
-	o.finality.sequence = uint64(newFinality.RxSeq)
-}
-
 // ensure initial merkle accumulator and snapshot
 func (o *receiver) prepare() error {
-	o.log.Debugf("prepare receiver")
-	number := big.NewInt(o.accumulator.Offset())
-	if number.Uint64()%o.epoch != 0 {
-		o.log.Panicf("Must be epoch block: epoch: %d number: %d", number.Uint64(), o.epoch)
+	offset := big.NewInt(o.accumulator.Offset())
+	if offset.Uint64()%o.epoch != 0 {
+		o.log.Panicf("accumulator offset must be epoch number - (%d != %d)", offset.Uint64(), o.epoch)
 	}
-	head, err := o.client.HeaderByNumber(context.Background(), number)
+
+	head, err := o.client.HeaderByNumber(context.Background(), offset)
 	if err != nil {
-		o.log.Errorf("fail to fetching header: number(%d) error(%s)", number.Uint64(), err.Error())
+		o.log.Errorf("fail to fetching header: number(%d) error(%s)", offset.Uint64(), err.Error())
 		return err
 	}
 
-	// No initial trusted block hash
+	number := head.Number.Uint64()
+	hash := head.Hash()
 	if o.accumulator.Len() <= 0 {
-		o.log.Infof("accumulate initial block hash: hash(%s)", head.Hash().Hex())
-		o.accumulator.AddHash(head.Hash().Bytes())
+		o.log.Infof("accumulate initial header - number(%d) hash(%s)", number, hash)
+		o.accumulator.AddHash(hash.Bytes())
 		if err := o.accumulator.Flush(); err != nil {
-			o.log.Errorln("fail to flush accumulator: err(%s)", err.Error())
+			o.log.Errorln("fail to flush accumulator - err(%s)", err.Error())
 			return err
 		}
 	}
 
-	ok, err := hasSnapshot(o.database, head.Hash())
+	ok, err := hasSnapshot(o.database, hash)
 	if err != nil {
-		o.log.Errorln("fail to check snapshot existent: err(%s)", err.Error())
+		o.log.Errorln("fail to check snapshot existent - err(%s)", err.Error())
 		return err
 	}
 
@@ -721,13 +735,12 @@ func (o *receiver) prepare() error {
 			return err
 		}
 
-		o.log.Infof("create initial snapshot: %s\n", snap.String())
+		o.log.Infof("create initial snapshot: number(%d) hash(%s)", snap.Number, snap.Hash)
 	}
 	return nil
 }
 
 func (o *receiver) synchronize(until *big.Int) error {
-	o.log.Debugln("synchronize receiver")
 	// synchronize up to `target` block
 	target, err := o.client.HeaderByNumber(context.Background(), until)
 	if err != nil {
@@ -793,22 +806,6 @@ func newProofOf(trie *trie.Trie, key []byte) ([][]byte, error) {
 	return proof, nil
 }
 
-// implements link.ReceiveStatus
-type srcStatus struct {
-	finnum   uint64
-	curnum   uint64
-	sequence uint64
-}
-
-// TODO reference
-func (s srcStatus) Height() int64 {
-	return int64(s.finnum)
-}
-
-func (s srcStatus) Seq() int64 {
-	return int64(s.sequence)
-}
-
 func ToVerifierStatus(blob []byte) *VerifierStatus {
 	vs := &VerifierStatus{}
 	if err := rlp.DecodeBytes(blob, vs); err != nil {
@@ -816,4 +813,89 @@ func ToVerifierStatus(blob []byte) *VerifierStatus {
 			hex.EncodeToString(blob), err.Error()))
 	}
 	return vs
+}
+
+type bstatus struct {
+	number   uint64
+	hash     common.Hash
+	sequence uint64
+	blocks   *BlockTree
+	cache    uint64
+}
+
+func (o *bstatus) clone() *bstatus {
+	return &bstatus{
+		number:   o.number,
+		sequence: o.sequence,
+	}
+}
+
+func (o *bstatus) update(number uint64, hash common.Hash, sequence uint64) (dirty bool) {
+	if number != uint64(0) && o.number != number {
+		dirty = true
+		o.number = number
+		o.hash = hash
+	}
+	if sequence != uint64(0) && o.sequence != sequence {
+		dirty = true
+		o.sequence = sequence
+	}
+	return dirty
+}
+
+// Implement ReceiveStatus
+func (o *bstatus) Height() int64 {
+	return int64(o.number)
+}
+
+func (o *bstatus) Seq() int64 {
+	return int64(o.sequence)
+}
+
+func newStatus(status *btp.BMCLinkStatus) *bstatus {
+	vs := &VerifierStatus{}
+	if err := rlp.DecodeBytes(status.Verifier.Extra, vs); err != nil {
+		panic(fmt.Sprintf("fail to decode verifier status - blob(%s) err(%s)",
+			hex.EncodeToString(status.Verifier.Extra), err.Error()))
+	}
+	return &bstatus{
+		number:   uint64(status.Verifier.Height),
+		hash:     vs.BlockTree.Root(),
+		sequence: uint64(status.RxSeq),
+		blocks:   vs.BlockTree,
+	}
+}
+
+func (o *receiver) purgeAndWakeup(peer *bstatus) {
+	o.cond.L.Lock()
+	defer o.cond.L.Unlock()
+
+	o.log.Tracef("Purge Heads(%d ~ %d) Msgs(%d ~ %d)",
+		o.peer.number, peer.number, o.peer.sequence, peer.sequence)
+	for i := o.peer.number; i <= peer.number; i++ {
+		o.heads.Remove(i)
+	}
+	for i := o.peer.sequence; i <= peer.sequence; i++ {
+		o.msgs.Remove(i)
+	}
+
+	if o.peer.number*2/3 < peer.number {
+		defer func() {
+			o.log.Tracef("ResumeWatcher")
+			o.cond.Broadcast()
+		}()
+	}
+
+	o.peer = peer
+}
+
+func (o *receiver) waitIfFullBuf(number uint64) {
+	o.cond.L.Lock()
+	defer func() {
+		o.cond.L.Unlock()
+	}()
+	if o.peer.number+CacheSize < number {
+		o.log.Tracef("WaitWatcher...")
+		o.cond.Wait()
+	}
 }
