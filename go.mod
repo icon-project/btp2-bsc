@@ -1,4 +1,4 @@
-module github.com/icon-project/btp2/bsc
+module github.com/icon-project/btp2-bsc
 
 replace (
 	github.com/btcsuite/btcd => github.com/btcsuite/btcd v0.23.0
