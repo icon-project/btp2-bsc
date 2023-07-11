@@ -1,6 +1,6 @@
 # End-to-End Testing Demo
 
-In this demo, you will learn how to perform end-to-end testing between ICON and Hardhat (EVM-compatible) environment.
+In this demo, you will learn how to perform end-to-end testing between ICON and BSC (EVM-compatible) environment.
 
 > **Note**
 > The code in this folder is written specifically for the learning experience and is intended only for demonstration purposes.
@@ -28,38 +28,12 @@ npm install
 
 A new directory named `node_modules` is created in the current working directory.
 
-## Setup ICON node
+## Operate ICON/BSC Private Networks
 
-This is also a one-time setup procedure unless you delete the ICON node data directory (`./docker/icon/data`)
-that preserves the setup procedure described below.
-
-To enable BTP block feature on the local ICON node, you need to perform several steps like
-decentralization, registering the node as a PRep, upgrading revision to 21, and so on.
-Because it's difficult to perform these steps manually, we provide a handy script for them.
-
-Before executing the script, you need to start nodes first.
+To operate private networks where contracts for e2edemo can be installed, run the following command.
 
 ```
 make start-nodes
-```
-
-Then, run the following command to setup the local ICON node.
-
-```
-make setup-icon
-```
-
-You will be seeing a series of commands executed. But at first, the script will be stopped with the following message.
-
-```
-Error: ICON: need to wait until the next term for decentralization
-```
-
-As the error message said, you need to wait until the next term
-(default is 100, see `termPeriod` in `./docker/icon/config/icon_config.json`)
-The node setup would be completed if you can see the following message when you run the `make setup-node` command again.
-```
-ICON: node setup completed
 ```
 
 ## Build and Deploy contracts
@@ -108,7 +82,7 @@ make run-demo
 ### Directory layout
 | Directory                       | Description                                      |
 |:--------------------------------|:-------------------------------------------------|
-| docker                          | Docker-related files for ICON and Hardhat chains |
+| docker                          | Docker-related files for ICON and BSC chains |
 | scripts                         | Scripts for setup, deployment and demo scenarios |
 | solidity                        | Root directory for compiling Solidity contracts  |
 | solidity/contracts/dapp-sample  | Solidity contract for DApp sample                |

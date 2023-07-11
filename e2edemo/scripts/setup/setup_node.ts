@@ -1,10 +1,9 @@
 import IconService from "icon-sdk-js";
-import {IconNetwork} from "../icon/network";
-import {Chain, Gov} from "../icon/system";
+import {IconNetwork, Chain, Gov} from "../icon";
 
 const {CI_WORKFLOW} = process.env
 const {IconAmount} = IconService;
-const iconNetwork = IconNetwork.getNetwork('icon0');
+const iconNetwork = IconNetwork.getDefault();
 const chain = new Chain(iconNetwork);
 const gov = new Gov(iconNetwork);
 const prepAddress = iconNetwork.wallet.getAddress()
@@ -97,8 +96,8 @@ async function setup_node() {
   console.log(`ICON: pubkey: ${pubkey}`)
   if (pubkey == undefined) {
     console.log('ICON: register PRep node publicKey')
-    // prefixing "04" for indicating uncompressed format
-    const pkey = '0x04' + iconNetwork.wallet.getPublicKey();
+    // register node publicKey in compressed form
+    const pkey = iconNetwork.wallet.getPublicKey(true);
     await chain.registerPRepNodePublicKey(prepAddress, pkey)
       .then((txHash) => chain.getTxResult(txHash))
       .then((result) => {

@@ -5,7 +5,7 @@ GRADLE = ./gradlew
 
 HARDHAT = npx hardhat
 TS_NODE = npx ts-node
-NETWORK = --network bsc_private
+NETWORK = --network bsc_localnet
 SOLIDITY_CONTRACTS = ./solidity/contracts
 
 .DEFAULT_GOAL := all
@@ -27,7 +27,8 @@ clean-solidity:
 	$(RM) -rf \
 	    $(SOLIDITY_CONTRACTS)/bmc \
 	    $(SOLIDITY_CONTRACTS)/bmv* \
-	    $(SOLIDITY_CONTRACTS)/xcall
+	    $(SOLIDITY_CONTRACTS)/xcall \
+	    $(SOLIDITY_CONTRACTS)/../build
 
 clean: clean-java clean-solidity
 
@@ -47,7 +48,7 @@ build-bmc-java:
 build-bmv-java:
 	@ echo ">>> Build BMV javascore" ; \
 	cd $(JAVASCORE_PATH) ; \
-	$(GRADLE) bmv:bsc:optimizedJar
+	$(GRADLE) bmv:bsc2:optimizedJar
 
 build-xcall-java:
 	@ echo ">>> Build xCall javascore" ; \
@@ -88,46 +89,44 @@ deploy-all: deploy-bmc deploy-bmv deploy-xcall deploy-dapp
 
 build-bsc:
 	@ echo ">>> Build bsc-geth" ; \
-	cd docker/bsc; \
-	make build-simple && make bootstrap-simple
+	cd docker/bsc2; \
+	make build-bsc
 
 start-bsc: build-bsc
 	@ echo ">>> Start bsc-geth" ; \
-	cd docker/bsc; \
-	make start-simple
+	cd docker/bsc2; \
+	make start-preset
 
 start-icon:
 	@ echo ">>> Start icon" ; \
-	cd docker; \
-	docker compose up icon-node -d
+	cd docker/icon; \
+	make start-preset
 
 start-nodes: start-bsc start-icon
 	@ echo ">>> Start nodes" ;
 
 stop-bsc:
 	@ echo ">>> Start bsc" ; \
-	cd docker/bsc; \
-	make stop-all
+	cd docker/bsc2; \
+	make stop
 
 stop-icon:
 	@ echo ">>> Stop icon" ; \
-	cd docker; \
-	docker compose down
+	cd docker/icon; \
+	make stop
 
 stop-nodes: stop-bsc stop-icon
 	@ echo ">>> Stop nodes" ; \
 
 reset-bsc: stop-bsc
 	@ echo ">>> Reset bsc" ; \
-	cd docker/bsc; \
+	cd docker/bsc2; \
 	make reset
 
 reset-icon: stop-icon
 	@ echo ">>> Reset icon" ; \
-	cd docker; \
-	cd icon; \
-	rm -rf logs/*; \
-	rm -rf data/*;
+	cd docker/icon; \
+	make reset
 
 reset-nodes: reset-bsc reset-icon
 	@ echo ">>> Reset nodes" ;

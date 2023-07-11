@@ -1,16 +1,10 @@
 {
   "chains": {
-    "bsc_testnet": {
-      "network": "0x61.bsc",
-      "endpoint": "https://data-seed-prebsc-1-s1.binance.org:8545",
-      "keystore": "./bsc-testnet.json",
-      "keypass": "btp2"
-    },
-    "bsc_private": {
-      "network": "0x63.bsc",
-      "endpoint": "http://localhost:8545",
-      "keystore": "./docker/bsc/init-holders/0x59b02d4d2f94ea5c55230715a58ebb0b703bcd4b",
-      "keypass": ""
+    "bsc_localnet": {
+        "network": "0x63.bsc",
+        "endpoint": "http://localhost:8545",
+        "keystore": "../keystore/bsc-localnet.json",
+        "keypass": " parameta"
     },
     "icon0": {
       "network": "0x3.icon",
@@ -20,7 +14,7 @@
     }
   },
   "link": {
-    "src": "bsc_private",
+    "src": "bsc_localnet",
     "dst": "icon0"
   }
 }

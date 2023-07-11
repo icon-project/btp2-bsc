@@ -9,18 +9,14 @@ const config: HardhatUserConfig = {
     artifacts: "./solidity/build/artifacts"
   },
   networks: {
-      "bsc_private": {
-          url: "http://localhost:8545",
-          accounts: [
-              // address: 0x59b02D4d2F94ea5c55230715a58EBb0b703bCD4B
-              '0xc484de1ef84e998869d59752d1f09bffa161673d54250ea152ec82d684e2f154'
-          ]
-      },
-      "bsc_testnet": {
-          url: "https://data-seed-prebsc-1-s1.binance.org:8545",
-          accounts: [
-          ]
-      }
+    "bsc_localnet": {
+      url: "http://127.0.0.1:8545",
+      accounts: [
+        // e2e/docker/bsc2
+        // address: 0x04d63aBCd2b9b1baa327f2Dda0f873F197ccd186
+        "0x59ba8068eb256d520179e903f43dacf6d8d57d72bd306e1bd603fdb8c8da10e8"
+      ]
+    },
   },
   solidity: {
     version: "0.8.12",

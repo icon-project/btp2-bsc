@@ -1,8 +1,6 @@
-import fs from 'fs';
-import { ethers } from 'hardhat';
-import {Contract} from "../icon/contract";
-import {IconNetwork} from "../icon/network";
-import {Deployments, ChainConfig, chainType} from "./config";
+import {ethers} from 'hardhat';
+import {Contract, IconNetwork, Jar} from "../icon";
+import {Deployments, ChainConfig, chainType, DEFAULT_CONFIRMATIONS } from "./config";
 
 const {JAVASCORE_PATH} = process.env
 const deployments = new Deployments(new Map());
@@ -11,8 +9,7 @@ async function deploy_java(target: string, chain: any) {
   const iconNetwork = IconNetwork.getNetwork(target);
   console.log(`${target}: deploy BMC for ${chain.network}`)
 
-  const bmcJar = JAVASCORE_PATH + '/bmc/build/libs/bmc-0.1.0-optimized.jar'
-  const content = fs.readFileSync(bmcJar).toString('hex')
+  const content = Jar.readFromFile(JAVASCORE_PATH, "bmc");
   const bmc = new Contract(iconNetwork)
   const deployTxHash = await bmc.deploy({
     content: content,
@@ -39,36 +36,36 @@ async function deploy_solidity(target: string, chain: any) {
 
   const BMCManagement = await ethers.getContractFactory("BMCManagement");
   const bmcm = await BMCManagement.deploy();
-  await bmcm.deployed();
-  await bmcm.initialize()
+  await bmcm.deployTransaction.wait(DEFAULT_CONFIRMATIONS);
+  await (await bmcm.initialize()).wait(DEFAULT_CONFIRMATIONS);
   console.log(`BMCManagement: deployed to ${bmcm.address}`);
 
   const BMCService = await ethers.getContractFactory("BMCService");
   const bmcs = await BMCService.deploy();
-  await bmcs.deployed();
-  await bmcs.initialize(bmcm.address)
+  await bmcs.deployTransaction.wait(DEFAULT_CONFIRMATIONS);
+  await (await bmcs.initialize(bmcm.address)).wait(DEFAULT_CONFIRMATIONS);
   console.log(`BMCService: deployed to ${bmcs.address}`);
 
   const BMCPeriphery = await ethers.getContractFactory("BMCPeriphery");
   const bmcp = await BMCPeriphery.deploy();
-  await bmcp.deployed();
-  await bmcp.initialize(chain.network, bmcm.address, bmcs.address);
+  await bmcp.deployTransaction.wait(DEFAULT_CONFIRMATIONS);
+  await (await bmcp.initialize(chain.network, bmcm.address, bmcs.address)).wait(DEFAULT_CONFIRMATIONS);
   console.log(`BMCPeriphery: deployed to ${bmcp.address}`);
 
   console.log(`${target}: management.setBMCPeriphery`);
   await bmcm.setBMCPeriphery(bmcp.address)
     .then((tx) => {
-      return tx.wait(1)
+      return tx.wait(DEFAULT_CONFIRMATIONS)
     });
   console.log(`${target}: management.setBMCService`);
   await bmcm.setBMCService(bmcs.address)
     .then((tx) => {
-      return tx.wait(1)
+      return tx.wait(DEFAULT_CONFIRMATIONS)
     });
   console.log(`${target}: service.setBMCPeriphery`);
   await bmcs.setBMCPeriphery(bmcp.address)
     .then((tx) => {
-      return tx.wait(1)
+      return tx.wait(DEFAULT_CONFIRMATIONS)
     });
 
   deployments.set(target, {
@@ -85,9 +82,6 @@ async function main() {
   const link = ChainConfig.getLink();
   const srcChain: any = ChainConfig.getChain(link.src);
   const dstChain: any = ChainConfig.getChain(link.dst);
-  console.log('link:', link)
-  console.log('src:', srcChain)
-  console.log('dst:', dstChain)
 
   await deploy_solidity(link.src, srcChain);
   await deploy_java(link.dst, dstChain);

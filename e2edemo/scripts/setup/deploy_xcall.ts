@@ -1,17 +1,13 @@
-import fs from 'fs';
-import { ethers } from 'hardhat';
-import {Contract} from "../icon/contract";
-import {IconNetwork} from "../icon/network";
-import {BMC} from "../icon/btp";
-import {Deployments, chainType} from "./config";
+import {ethers} from 'hardhat';
+import {Contract, IconNetwork, Jar, BMC} from "../icon";
+import {Deployments, chainType, DEFAULT_CONFIRMATIONS} from "./config";
 
 const {JAVASCORE_PATH} = process.env
 const deployments = Deployments.getDefault();
 
 async function deploy_xcall_java(target: string, chain: any) {
   const iconNetwork = IconNetwork.getNetwork(target);
-  const xcallJar = JAVASCORE_PATH + '/xcall/build/libs/xcall-0.1.0-optimized.jar'
-  const content = fs.readFileSync(xcallJar).toString('hex')
+  const content = Jar.readFromFile(JAVASCORE_PATH, "xcall", "0.6.2");
   const xcall = new Contract(iconNetwork)
   const deployTxHash = await xcall.deploy({
     content: content,
@@ -40,8 +36,8 @@ async function deploy_xcall_java(target: string, chain: any) {
 async function deploy_xcall_solidity(target: string, chain: any) {
   const CallSvc = await ethers.getContractFactory("CallService")
   const xcallSol = await CallSvc.deploy()
-  await xcallSol.deployed()
-  await xcallSol.initialize(chain.contracts.bmc)
+  await xcallSol.deployTransaction.wait(DEFAULT_CONFIRMATIONS);
+  await (await xcallSol.initialize(chain.contracts.bmc)).wait(DEFAULT_CONFIRMATIONS);
   chain.contracts.xcall = xcallSol.address
   console.log(`${target}: xCall: deployed to ${xcallSol.address}`);
 
@@ -56,6 +52,7 @@ async function main() {
   const srcChain = deployments.get(src);
   const dstChain = deployments.get(dst);
 
+  // deploy to src network first
   await deploy_xcall_solidity(src, srcChain);
   await deploy_xcall_java(dst, dstChain);
 

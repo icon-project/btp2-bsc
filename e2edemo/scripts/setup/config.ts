@@ -3,6 +3,8 @@ const {PWD} = process.env
 const DEPLOYMENTS_PATH = `${PWD}/deployments.json`
 const CHAIN_CONFIG_PATH = `${PWD}/chain_config.json`
 
+export const DEFAULT_CONFIRMATIONS = 5;
+
 export class Deployments {
   map: Map<string, any>;
   private static instance: Deployments;

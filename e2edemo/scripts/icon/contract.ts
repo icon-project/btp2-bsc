@@ -1,12 +1,10 @@
-import IconService from 'icon-sdk-js';
-import Wallet from "icon-sdk-js/build/Wallet";
+import {
+  IconService, Block, BigNumber, Wallet,
+  SignedTransaction, ConfirmedTransaction, TransactionResult,
+} from 'icon-sdk-js';
 import {IconNetwork} from "./network";
-import Block from "icon-sdk-js/build/data/Formatter/Block";
-import BigNumber from "bignumber.js";
-import TransactionResult from "icon-sdk-js/build/data/Formatter/TransactionResult";
-import ConfirmedTransaction from "icon-sdk-js/build/data/Formatter/ConfirmedTransaction";
 
-const {IconBuilder, IconConverter, SignedTransaction} = IconService;
+const {IconBuilder, IconConverter} = IconService;
 
 export class EventLog {
   scoreAddress: string | undefined
@@ -185,15 +183,19 @@ export class Contract {
 
   async waitEvent(
       sig: string,
+      fromBlock?: number,
   ) {
     let latest = await this.getBlock("latest");
-    let height = latest.height -1;
+    let height = latest.height - 1;
+    if (fromBlock && fromBlock < height) {
+      height = fromBlock;
+    }
     let block = await this.getBlock(height);
     while (true) {
-      while (height < latest.height){
+      while (height < latest.height) {
         const events = await this.filterEventFromBlock(block, sig, this.address);
         if (events.length > 0) {
-          return events;
+          return { block, events };
         }
         height++;
         if (height == latest.height) {

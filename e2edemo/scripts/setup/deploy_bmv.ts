@@ -1,12 +1,9 @@
-import fs from 'fs';
 import rlp from 'rlp';
 import { ethers } from 'hardhat';
-import {Contract} from "../icon/contract";
-import {BMC, BMV, getBtpAddress} from "../icon/btp";
-import {Gov} from "../icon/system";
-import {IconNetwork} from "../icon/network";
+import {Contract, IconNetwork, Jar} from "../icon";
+import {Gov, BMC, BMV, getBtpAddress} from "../icon";
 import IconService from "icon-sdk-js";
-import {Deployments, chainType} from "./config";
+import {Deployments, chainType, DEFAULT_CONFIRMATIONS} from "./config";
 const {IconConverter} = IconService;
 const {JAVASCORE_PATH, BMV_BRIDGE} = process.env
 const EPOCH = 200;
@@ -57,15 +54,15 @@ async function get_first_btpblock_header(network: IconNetwork, chain: any) {
   return firstBlockHeader;
 }
 
-async function deploy_bmv_jav(src: string, dst: string, srcChain: any, dstChain: any, params: any) {
-  const srcNetwork = IconNetwork.getNetwork(src);
-  const bmvJar = JAVASCORE_PATH + '/bmv/bsc/build/libs/bmv-bsc-0.1.0-optimized.jar';
-  const content = fs.readFileSync(bmvJar).toString('hex');
+async function deploy_bmv_jav(srcNetwork: IconNetwork, srcChain: any, params: any) {
+  const content = Jar.readFromFile(JAVASCORE_PATH, "bmv/bsc2");
+  console.log('src network:', srcNetwork);
+  console.log('params:', params);
   const bmv = new Contract(srcNetwork)
   const deployTxHash = await bmv.deploy({
     content: content,
-    params: params
-  });
+    params,
+  })
   const result = await bmv.getTxResult(deployTxHash);
   if (result.status != 1) {
     throw new Error(`BMV deployment failed: ${result.txHash}`);
@@ -86,22 +83,21 @@ async function genJavBmvParamsForLuban(bmc: string, number: number) {
   console.log('trusted block number:', tarnum);
   const curr = await headByNumber(tarnum);
   const prev = tarnum != 0 ? await headByNumber(tarnum - EPOCH) : curr;
-  const extra = prev.extraData;
-  const valBytes = validatorBytes(extra);
-  let validators = [];
-  for (let i = 0; i < valBytes.length / ValidatorBytesLengthLuban; i++) {
-      validators.push('0x' + valBytes.slice(i*ValidatorBytesLengthLuban, i*ValidatorBytesLengthLuban + EthAddrLength).toString('hex'));
-  }
+  let validators = parseValidators(Buffer.from(prev.extraData.slice(2, prev.extraData.length), 'hex'));
+  let candidates = parseValidators(Buffer.from(curr.extraData.slice(2, curr.extraData.length), 'hex'));
+
+  console.log('validators:', validators);
 
   const recents = [];
   for (let i = Math.floor(validators.length / 2); i >= 0; i--) {
-      recents.push((await ethers.provider.getBlock(tarnum-i)).miner);
+    let miner = (await ethers.provider.getBlock(tarnum-i)).miner;
+      recents.push(miner);
   }
 
   return {
-      bmc: bmc,
-      chainId: '0x' + (await ethers.provider.getNetwork()).chainId.toString(16),
-      header: Buffer.from(rlp.encode([
+      _bmc: bmc,
+      _chainId: '0x' + (await ethers.provider.getNetwork()).chainId.toString(16),
+      _header: Buffer.from(rlp.encode([
         curr.parentHash,
         curr.sha3Uncles,
         curr.miner,
@@ -118,65 +114,36 @@ async function genJavBmvParamsForLuban(bmc: string, number: number) {
         curr.mixHash,
         curr.nonce
       ])).toString('hex'),
-      recents: recents,
-      validators: validators
+      _recents: Buffer.from(rlp.encode(recents)).toString('hex'),
+      _candidates: Buffer.from(rlp.encode(candidates)).toString('hex'),
+      _validators: Buffer.from(rlp.encode(validators)).toString('hex')
   }
 }
 const BlsPubLenth = 48;
 const EthAddrLength = 20;
 const ValidatorBytesLengthLuban = EthAddrLength + BlsPubLenth;
 const ExtraVanity = 32;
+const ExtraSeal = 65;
 const ValidatorNumberSize = 1;
 
-function validatorBytes(extra) {
-    let ebuf = Buffer.from(extra.slice(2, extra.length), 'hex');
-    let valnum = ebuf[ExtraVanity];
-    let start = ExtraVanity + ValidatorNumberSize;
-    let end = start + valnum * ValidatorBytesLengthLuban;
-    return ebuf.slice(start, end);
-}
-
-async function genJavBmvParams(bmc: string, number: number) {
-  const curnum = number != undefined ? number : await ethers.provider.getBlockNumber();
-  const tarnum = curnum - curnum % EPOCH;
-  console.log('trusted block number:', tarnum);
-  const curr = await headByNumber(tarnum);
-  const prev = tarnum != 0 ? await headByNumber(tarnum - EPOCH) : curr;
-  const extra = prev.extraData;
-  const valBytes = extra.slice('0x'.length + 32 * 2, extra.length - 65 * 2)
-  const validators = [];
-  for (let i = 0; i < valBytes.length / (ValidatorBytesLength); i++) {
-      validators.push('0x' + valBytes.slice(i*ValidatorBytesLength, (i+1)*ValidatorBytesLength));
+function parseValidators(extra) {
+  console.log('etra:', extra.toString('hex'));
+  if (extra.length <= ExtraVanity + ExtraSeal) {
+    throw new Error("Wrong Validator Bytes");
   }
 
-  const recents = [];
-  for (let i = Math.floor(validators.length / 2); i >= 0; i--) {
-      recents.push((await ethers.provider.getBlock(tarnum-i)).miner);
+  const num = Buffer.from(extra, 'hex')[ExtraVanity];
+  const start = ExtraVanity + 1;
+  const end = start + num * ValidatorBytesLengthLuban;
+  const validatorsBytes = Buffer.from(extra.slice(start, end));
+  let validators = [];
+  for (let i = 0; i < num; i++) {
+    validators.push([
+      '0x' + validatorsBytes.slice(i * ValidatorBytesLengthLuban, i * ValidatorBytesLengthLuban + EthAddrLength).toString('hex'),
+      '0x' + validatorsBytes.slice(i * ValidatorBytesLengthLuban + EthAddrLength, (i+1) * ValidatorBytesLengthLuban).toString('hex')
+    ]);
   }
-
-  return {
-      bmc: bmc,
-      chainId: '0x' + (await ethers.provider.getNetwork()).chainId.toString(16),
-      header: Buffer.from(rlp.encode([
-        curr.parentHash,
-        curr.sha3Uncles,
-        curr.miner,
-        curr.stateRoot,
-        curr.transactionsRoot,
-        curr.receiptsRoot,
-        curr.logsBloom,
-        curr.difficulty,
-        curr.number,
-        curr.gasLimit,
-        curr.gasUsed,
-        curr.timestamp,
-        curr.extraData,
-        curr.mixHash,
-        curr.nonce
-      ])).toString('hex'),
-      recents: recents,
-      validators: validators
-  }
+  return validators;
 }
 
 async function deploy_bmv_sol(src: string, dst: string, srcChain: any, dstChain: any) {
@@ -203,7 +170,7 @@ async function setup_link_icon(src: string, srcChain:any, dstChain: any) {
   const bmc = new BMC(srcNetwork, srcChain.contracts.bmc);
   const dstBmcAddr = getBtpAddress(dstChain.network, dstChain.contracts.bmc);
 
-  console.log(`${src}: addVerifier for ${dstChain.network}`)
+  console.log(`${src}: addVerifier for ${dstChain.network}, ${srcChain.contracts.bmv}`)
   await bmc.addVerifier(dstChain.network, srcChain.contracts.bmv)
     .then((txHash) => bmc.getTxResult(txHash))
     .then((result) => {
@@ -236,18 +203,18 @@ async function setup_link_sol(src: string, srcChain: any, dstChain: any) {
   console.log(`${src}: addVerifier for ${dstChain.network}`)
   await bmcm.addVerifier(dstChain.network, srcChain.contracts.bmv)
     .then((tx) => {
-      return tx.wait(1)
+      return tx.wait(DEFAULT_CONFIRMATIONS)
     });
   console.log(`${src}: addLink: ${dstBmcAddr}`)
   await bmcm.addLink(dstBmcAddr)
     .then((tx) => {
-      return tx.wait(1)
+      return tx.wait(DEFAULT_CONFIRMATIONS)
     });
   const signer = await (await ethers.getSigners())[0].getAddress()
   console.log(`${src}: addRelay: ${signer}`)
   await bmcm.addRelay(dstBmcAddr, signer)
     .then((tx) => {
-      return tx.wait(1)
+      return tx.wait(DEFAULT_CONFIRMATIONS)
     });
 }
 
@@ -261,10 +228,12 @@ async function setup_link_sol(src: string, srcChain: any, dstChain: any) {
   await open_btp_network(dst, src, dstChain);
 
   console.log('srcChain:', srcChain, 'dstChain:', dstChain);
-  let params = await genJavBmvParamsForLuban(dstChain.contracts.bmc);
+  let params = await genJavBmvParamsForLuban(dstChain.contracts.bmc, 400);
   console.log('bmv deployment args:', params);
   await deploy_bmv_sol(src, dst, srcChain, dstChain);
-  await deploy_bmv_jav(dst, src, dstChain, srcChain, params);
+  console.log('try jav deploy');
+  await deploy_bmv_jav(IconNetwork.getNetwork(dst), dstChain, params);
+  console.log('done jav deploy');
   // update deployments
   deployments.set(src, srcChain);
   deployments.set(dst, dstChain);
