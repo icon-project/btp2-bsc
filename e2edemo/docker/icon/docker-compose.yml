@@ -1,10 +1,5 @@
 version: "3"
 services:
-  ganache:
-    image: trufflesuite/ganache:v7.5.0
-    ports:
-      - 8545:8545
-    command: -b 3 -l 15000000 -p 8545 -m "test test test test test test test test test test test junk"
   icon-node:
     image: iconloop/goloop-icon:v1.3.4
     container_name: "icon-node"
@@ -19,7 +14,7 @@ services:
       - 9080:9080
       - 7080:7080
     volumes:
-      - ./icon/config:/goloop/config
-      - ./icon/data:/goloop/data
-      - ./icon/logs:/goloop/logs
+      - ./config:/goloop/config
+      - ./data:/goloop/data
+      - ./logs:/goloop/logs
     command: /bin/sh -c /goloop/config/start.sh
