@@ -1,0 +1,35 @@
+version: "3"
+
+services:
+  node1:
+    image: bsc-geth:docker-local
+    env_file: .env
+    ports:
+      - 8545:8545
+    volumes:
+      - ./storage/node1:/root/.ethereum
+      - ./scripts:/scripts
+    command: ash /scripts/start.sh
+
+  node2:
+    image: bsc-geth:docker-local
+    env_file: .env
+    volumes:
+      - ./storage/node2:/root/.ethereum
+      - ./scripts:/scripts
+    command: ash /scripts/start.sh
+
+  node3:
+    image: bsc-geth:docker-local
+    env_file: .env
+    volumes:
+      - ./storage/node3:/root/.ethereum
+      - ./scripts:/scripts
+    command: ash /scripts/start.sh
+
+networks:
+  default:
+    ipam:
+      driver: default
+      config:
+        - subnet: 99.99.0.0/16

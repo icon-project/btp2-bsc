@@ -1,0 +1,16 @@
+FROM ethereum/solc:0.6.4-alpine
+
+ARG GIT_SOURCE
+ARG GIT_CHECKOUT_REF
+
+RUN apk add --d --no-cache ca-certificates npm nodejs bash alpine-sdk expect jq
+RUN git clone ${GIT_SOURCE} /root/genesis \
+        && cd /root/genesis && git checkout ${GIT_CHECKOUT_REF} && npm ci
+
+COPY config/init_holders.template /root/genesis/init_holders.template
+COPY --from=bsc-geth:docker-local /usr/local/bin/geth /usr/local/bin/geth
+COPY --from=bsc-geth:docker-local /usr/local/bin/bootnode /usr/local/bin/bootnode
+#COPY bsc/build/bin/geth /usr/local/bin/geth
+#COPY bsc/build/bin/bootnode /usr/local/bin/bootnode
+
+ENTRYPOINT ["/bin/bash"]

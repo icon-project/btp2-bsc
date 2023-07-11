@@ -1,0 +1,26 @@
+version: "3"
+
+services:
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile.bootstrap
+      args:
+        GIT_SOURCE: https://github.com/binance-chain/bsc-genesis-contract.git
+        GIT_CHECKOUT_REF: v1.1.9
+    env_file: .env
+    environment:
+      INIT_HOLDER_BALANCE: "500000000000000000000"
+      NUMS_OF_VALIDATOR: 3
+    volumes:
+      - ./storage:/root/storage
+      - ./scripts:/root/scripts
+      - ./config:/root/config
+    command: /root/scripts/bootstrap.sh
+    networks:
+      - bootstrap
+
+networks:
+  bootstrap:
+    ipam:
+      driver: default
