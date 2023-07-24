@@ -66,6 +66,8 @@ func NewSender(config SenderConfig, wallet wallet.Wallet, log log.Logger) btp.Se
 }
 
 func (o *sender) Start() (<-chan *btp.RelayResult, error) {
+	o.log.Traceln("++Sender::Start")
+	defer o.log.Traceln("--Sender::Start")
 	if err := o.prepare(); err != nil {
 		return nil, err
 	}
@@ -113,6 +115,7 @@ func (o *sender) prepare() error {
 
 func (o *sender) watchBlockFinalities() error {
 	o.log.Debugf("Enter Sender Loop")
+	defer o.log.Debugf("Exit Sender Loop")
 	headCh := make(chan *types.Header)
 	number := new(big.Int).SetUint64(o.finality.Number + uint64(1))
 	snap := o.finality
@@ -123,20 +126,24 @@ func (o *sender) watchBlockFinalities() error {
 	for {
 		select {
 		case err := <-sub.Err():
+			o.log.Errorf("Watcher error(%+v)", err)
 			return err
 		case head := <-headCh:
 			snap, err = snap.apply(head, o.chainId)
 			if err != nil {
+				o.log.Errorf("fail to apply snapshot - err(%+v)", err)
 				sub.Unsubscribe()
 				return err
 			}
 
 			if err = o.snapshots.add(snap); err != nil {
+				o.log.Errorf("fail to add snapshot - err(%+v)", err)
 				sub.Unsubscribe()
 				return err
 			}
 
 			if fnzs, err := calc.feed(snap.Hash); err != nil {
+				o.log.Errorf("fail to calculate finality - err(%+v)", err)
 				sub.Unsubscribe()
 				return err
 			} else {
@@ -145,6 +152,7 @@ func (o *sender) watchBlockFinalities() error {
 				}
 				fn, err := o.snapshots.get(fnzs[len(fnzs)-1])
 				if err != nil {
+					o.log.Errorf("fail to get snapshot - err(%+v)", err)
 					sub.Unsubscribe()
 					return err
 				}
@@ -185,22 +193,30 @@ func (o *sender) GetStatus() (*btp.BMCLinkStatus, error) {
 }
 
 func (o *sender) Relay(rm btp.RelayMessage) (int, error) {
+	o.log.Traceln("++Sender::Relay")
+	defer o.log.Traceln("--Sender::Relay")
 	if o.transactor.Busy() {
+		o.log.Traceln("SenderBusy")
 		return 0, errors.ErrInvalidState
 	}
 
-	if opts, err := bind.NewKeyedTransactorWithChainID(o.wallet.(*wallet.EvmWallet).Skey, o.chainId); err != nil {
+	opts, err := bind.NewKeyedTransactorWithChainID(o.wallet.(*wallet.EvmWallet).Skey, o.chainId)
+	if err != nil {
+		o.log.Errorf("fail to make signed transaction - err(%+v)", err)
 		return 0, err
-	} else {
-		o.transactor.Send(newMessageTx(rm.Id(), o.src.String(), o.client, opts, rm.Bytes(), o.log))
-		return 0, nil
 	}
+	o.transactor.Send(newMessageTx(rm.Id(), o.src.String(), o.client, opts, rm.Bytes(), o.log))
+	return 0, nil
 }
 
 func (o *sender) GetMarginForLimit() int64 {
+	o.log.Traceln("++Sender::GetMargin")
+	defer o.log.Traceln("--Sender::GetMargin")
 	return 0
 }
 
 func (o *sender) TxSizeLimit() int {
+	o.log.Traceln("++Sender::TxSizeLimi")
+	defer o.log.Traceln("--Sender::TxSizeLimi")
 	return txSizeLimit
 }

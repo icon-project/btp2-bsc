@@ -122,6 +122,7 @@ func (o *MessageTransactor) Run(replies chan<- *btp.RelayResult) {
 func (o *MessageTransactor) Send(msg MessageTx) {
 	typ := msg.Type()
 	if typ == Faulted || typ == Dropped || typ == Executed || typ == Finalized {
+		o.log.Infof("Notify message transition - typ(%d)", typ)
 		o.replies <- msg.Raw()
 	}
 
@@ -201,32 +202,47 @@ func (o *CreatedMessage) Type() MessageType {
 }
 
 func (o *CreatedMessage) Transit() MessageTx {
-	if o.opts.GasLimit != uint64(0) {
-		o.log.Panicf("TODO Supports CustomGasLimit")
-	}
-	for ErrCounter := 0; ; ErrCounter++ {
-		tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob)
-		if err != nil {
-			if ErrCounter >= 3 {
-				o.log.Warnf("MessageTransition(C->D) ID(%d) Blob(%s) Err(%s)",
-					o.id, hex.EncodeToString(o.blob), err.Error())
-				return &DroppedMessage{
-					id:  o.id,
-					err: err,
-					log: o.log,
+	if o.opts.GasLimit == uint64(0) {
+		o.opts.NoSend = true
+		for ErrCounter := 0; ; ErrCounter++ {
+			if tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob); err != nil {
+				o.log.Errorf("fail to estimate gas - err(%+v) retry(%d)", err, ErrCounter)
+				if ErrCounter >= 10 {
+					o.log.Warnf("MessageTransition(C->D) ID(%d) Blob(%s) Err(%s)",
+						o.id, hex.EncodeToString(o.blob), err.Error())
+					return &DroppedMessage{
+						id:  o.id,
+						err: errors.New("EstimateGasFailure"),
+						log: o.log,
+					}
 				}
+				time.Sleep(time.Second * 2)
+				continue
+			} else {
+				o.opts.NoSend = false
+				o.opts.GasLimit = uint64(float64(tx.Gas()) * 1.3)
+				o.log.Debugf("Original GasLimit(%d), Enough GasLimit(%d)", tx.Gas(), o.opts.GasLimit)
+				break
 			}
-			o.log.Debugf("Retry to estimate gas limit - attempt(%d) err(%s)", ErrCounter, err.Error())
-			time.Sleep(time.Second * 2)
-			continue
-		} else {
-			o.log.Debugf("MessageTransition(C->P) ID(%d) Tx(%s)", o.id, tx.Hash().Hex())
-			return &PendingMessage{
-				log:    o.log,
-				id:     o.id,
-				tx:     tx,
-				client: o.client,
-			}
+		}
+	}
+
+	tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob)
+	if err != nil {
+		o.log.Warnf("MessageTransition(C->D) ID(%d) Blob(%s) Err(%s)",
+			o.id, hex.EncodeToString(o.blob), err.Error())
+		return &DroppedMessage{
+			id:  o.id,
+			err: err,
+			log: o.log,
+		}
+	} else {
+		o.log.Debugf("MessageTransition(C->P) ID(%d) Tx(%s)", o.id, tx.Hash().Hex())
+		return &PendingMessage{
+			log:    o.log,
+			id:     o.id,
+			tx:     tx,
+			client: o.client,
 		}
 	}
 }
@@ -257,10 +273,14 @@ func (o *PendingMessage) Transit() MessageTx {
 	pending := true
 	attempt := int64(0)
 	hash := o.tx.Hash()
-	for pending && attempt < 5 {
+	for pending && attempt < 10 {
 		time.Sleep(time.Duration(attempt*2) * time.Second)
 		_, pending, err = o.client.TransactionByHash(context.Background(), hash)
 		if err == ethereum.NotFound {
+			if attempt < 5 {
+				o.log.Debugf("retry to query not found transaction")
+				continue
+			}
 			o.log.Warnf("MessageTransition(P->D) ID(%d) Tx(%s)", o.id, hash.Hex())
 			return &DroppedMessage{
 				id:   o.id,
@@ -291,7 +311,7 @@ func (o *PendingMessage) Transit() MessageTx {
 
 	receipt, err := o.client.TransactionReceipt(context.Background(), hash)
 	if err != nil {
-		o.log.Warnf("MessageTransition(P->F) ID(%d) Tx(%s) Err(NoReceipt)", o.id, hash.Hex())
+		o.log.Warnf("MessageTransition(P->F) ID(%d) Tx(%s) Err(NoReceipt:%+v)", o.id, hash.Hex(), err)
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("ReceiptQueryFailure"),

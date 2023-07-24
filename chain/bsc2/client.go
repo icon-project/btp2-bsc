@@ -1,7 +1,9 @@
 package bsc
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -32,21 +34,31 @@ type transport struct {
 }
 
 func (o *transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	defer req.Body.Close()
 	var attempts int
 	var res *http.Response
 	var err error
+	body := make([]byte, req.ContentLength)
+	if _, err := req.Body.Read(body); err != nil {
+		o.log.Panicln(err.Error())
+	}
+
 	for attempts < 5 {
 		time.Sleep(time.Duration(attempts) * time.Second)
-		if res, err = o.transport.RoundTrip(req.Clone(context.Background())); err != nil {
+		cloned := req.Clone(context.Background())
+		cloned.Body = io.NopCloser(bytes.NewBuffer(body))
+		if res, err = o.transport.RoundTrip(cloned); err != nil {
+			o.log.Debugf("RoundTrip Error(%s)", err.Error())
 			return nil, err
 		} else if res.StatusCode >= 500 {
 			o.log.Warnf("server faults - code(%d)", res.StatusCode)
 			attempts++
 			continue
 		} else {
-			return res, err
+			return res, nil
 		}
 	}
+	o.log.Debugf("Max trial - err(%+v)", err)
 	return nil, err
 }
 
@@ -105,6 +117,7 @@ func NewClient(endpoint string, from, to btp.BtpAddress, log log.Logger) *Client
 func (o *Client) ReceiptsByBlockHash(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	block, err := o.BlockByHash(ctx, hash)
 	if err != nil {
+		o.log.Warnf("fail to fetch block - err(%+v)", err)
 		return nil, err
 	}
 
@@ -112,6 +125,7 @@ func (o *Client) ReceiptsByBlockHash(ctx context.Context, hash common.Hash) (typ
 	for _, transaction := range block.Transactions() {
 		receipt, err := o.TransactionReceipt(ctx, transaction.Hash())
 		if err != nil {
+			o.log.Warnf("fail to fetch receipts - err(%+v)", err)
 			return nil, err
 		}
 		receipts = append(receipts, receipt)

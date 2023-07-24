@@ -59,7 +59,6 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 	}
 
 	// on network
-	o.log.Tracef("[DBG] SNAP ON NETWORK")
 	if err := o.ensure(id); err != nil {
 		return nil, err
 	}

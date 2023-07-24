@@ -131,9 +131,11 @@ func (o *receiver) Start(peer *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, er
 
 	// synchronize local status until finality of peer
 	o.log.Infoln("synchronize receiver status...")
+	o.log.Infof("Sync recv status - target(%d:%s)", o.peer.number, o.peer.hash)
 	if err := o.synchronize(new(big.Int).SetUint64(o.peer.number)); err != nil {
 		o.log.Panicf("fail to synchronize status - err(%s)", err)
 	}
+	o.log.Infof("Done - sync recv status")
 
 	// check node connection
 	if latest, err := o.client.BlockNumber(context.Background()); err != nil {
@@ -317,18 +319,20 @@ func (o *receiver) updateStatus(number uint64, hash common.Hash, sequence uint64
 func (o *receiver) queryAndCacheMessages(child, ancestor common.Hash) (uint64, error) {
 	var sequence uint64
 	for child != ancestor {
+		snap, _ := o.snapshots.get(child)
+		o.log.Debugf("Query Message BlockHash(%d:%s)", snap.Number, snap.Hash)
 		ms, err := o.client.MessagesByBlockHash(context.Background(), child)
 		if err != nil {
 			return sequence, err
 		}
 
 		for _, m := range ms {
-			s := m.Seq.Uint64()
+			seq := m.Seq.Uint64()
 			o.log.Infof("NewMessage - M(%d:%d:%.8s)",
-				s, m.Raw.BlockNumber, m.Raw.BlockHash.Hex())
-			o.msgs.Add(s, m)
-			if s != 0 {
-				sequence = s
+				seq, m.Raw.BlockNumber, m.Raw.BlockHash.Hex())
+			o.msgs.Add(seq, m)
+			if seq != 0 {
+				sequence = seq
 			}
 		}
 
@@ -376,6 +380,7 @@ func (o *receiver) GetHeightForSeq(sequence int64) int64 {
 		o.log.Errorf("fail to fetch message - err(%s) start(%d) sequence(%d)", err.Error(), o.startnumber, sequence)
 		return 0
 	} else if msg == nil {
+		o.log.Warnf("no such message(%d)", sequence)
 		return 0
 	} else {
 		o.log.Tracef("found message(%d:%s)", msg.Raw.BlockNumber, msg.Raw.BlockHash)
@@ -453,6 +458,7 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 		if hd, ok := o.heads.Get(number); ok {
 			head = hd.(*types.Header)
 		} else {
+			o.log.Warnf("no header(%d)", number)
 			break
 		}
 
@@ -482,6 +488,7 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 			peer.blocks.Prune(fnzs[len(fnzs)-1])
 			for i := 0; i < len(fnzs) && !exists; i++ {
 				if msgs, err := o.client.MessagesByBlockHash(context.Background(), fnzs[i]); err != nil {
+					o.log.Errorf("fail to fetch message - block(%s) err(%s)", fnzs[i], err)
 					return nil, err
 				} else if len(msgs) > 0 {
 					exists = true
@@ -526,10 +533,12 @@ func (o *receiver) BuildBlockProof(status *btp.BMCLinkStatus, target int64) (lin
 	}
 	_, witness, err := o.accumulator.WitnessForAt(target+1, int64(peer.number+1), o.accumulator.Offset())
 	if err != nil {
+		o.log.Errorf("fail to load witness - err(%s)", err)
 		return nil, err
 	}
 
 	if head, err := o.client.HeaderByNumber(context.Background(), big.NewInt(target)); err != nil {
+		o.log.Errorf("fail to find header(%d) - err(%s)", target, err)
 		return nil, err
 	} else {
 		o.log.Infof("BP{ H(%d:%s) }", head.Number.Uint64(), head.Hash())
@@ -584,6 +593,13 @@ func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (li
 	if err != nil {
 		o.log.Errorf("fail to create receipts mpt - hash(%s), err(%+v)", hash.Hex(), err)
 		return nil, err
+	}
+
+	o.log.Debugf("Calc ReceiptsRoot:(%s)", mpt.Hash())
+	if h, e := o.client.HeaderByHash(context.Background(), hash); e != nil {
+		panic(fmt.Sprintf("fail to fetching header(%s), err(%s)", hash.Hex(), e.Error()))
+	} else {
+		o.log.Debugf("H=> %d:%s:%s", h.Number.Uint64(), h.Hash().Hex(), h.ReceiptHash.Hex())
 	}
 
 	var msgproof *MessageProof
@@ -676,12 +692,14 @@ func (o *receiver) FinalizedStatus(sch <-chan *btp.BMCLinkStatus) {
 func (o *receiver) syncAcc(until common.Hash) error {
 	end, err := o.client.HeaderByHash(context.Background(), until)
 	if err != nil {
+		o.log.Errorf("fail to fetch header(%s) - err(%s)", until, err)
 		return err
 	}
 
 	cursor := o.accumulator.Height()
 	for cursor <= end.Number.Int64() {
 		if head, err := o.client.HeaderByNumber(context.Background(), big.NewInt(cursor)); err != nil {
+			o.log.Errorf("fail to fetch header(%d) - err(%s)", cursor, err)
 			return err
 		} else {
 			o.accumulator.AddHash(head.Hash().Bytes())
@@ -690,6 +708,7 @@ func (o *receiver) syncAcc(until common.Hash) error {
 	}
 
 	if err := o.accumulator.Flush(); err != nil {
+		o.log.Errorf("fail to flush accumulator - (%s)", err)
 		return err
 	}
 	return nil
@@ -749,12 +768,14 @@ func (o *receiver) synchronize(until *big.Int) error {
 	hash := target.Hash()
 
 	// synchronize snapshots
-	o.log.Debugf("synchronize block snapshots...")
+	o.log.Infof("synchronize block snapshots - until(%s)", hash)
 	if err := o.snapshots.ensure(hash); err != nil {
+		o.log.Errorf("fail to load past snapshots - err(%+v)", err)
 		return err
 	}
 
 	// synchronize accumulator
+	o.log.Infof("synchronize accumulator...")
 	if err := o.syncAcc(hash); err != nil {
 		return err
 	}
@@ -773,25 +794,44 @@ func typeToUint(_type link.MessageItemType) uint {
 	return 0
 }
 
-func newMTPWithReceipts(receipts types.Receipts) (*trie.Trie, error) {
-	if trie, err := trie.New(common.Hash{}, trie.NewDatabase(memorydb.New())); err != nil {
-		return nil, err
-	} else {
-		for _, receipt := range receipts {
-			key, err := rlp.EncodeToBytes(receipt.TransactionIndex)
-			if err != nil {
-				return nil, err
-			}
+func encodeForDerive(receipts types.Receipts, i int, buf *bytes.Buffer) []byte {
+	buf.Reset()
+	receipts.EncodeIndex(i, buf)
+	// It's really unfortunate that we need to do perform this copy.
+	// StackTrie holds onto the values until Hash is called, so the values
+	// written to it must not alias.
+	return common.CopyBytes(buf.Bytes())
+}
 
-			buf := new(bytes.Buffer)
-			buf.Reset()
-			if err := receipt.EncodeRLP(buf); err != nil {
-				return nil, err
-			}
-			trie.Update(key, buf.Bytes())
-		}
-		return trie, nil
+func newMTPWithReceipts(receipts types.Receipts) (*trie.Trie, error) {
+	trie, err := trie.New(common.Hash{}, trie.NewDatabase(memorydb.New()))
+	if err != nil {
+		return nil, err
 	}
+
+	trie.Reset()
+
+	valueBuf := new(bytes.Buffer)
+	// StackTrie requires values to be inserted in increasing hash order, which is not the
+	// order that `list` provides hashes in. This insertion sequence ensures that the
+	// order is correct.
+	var indexBuf []byte
+	for i := 1; i < receipts.Len() && i <= 0x7f; i++ {
+		indexBuf = rlp.AppendUint64(indexBuf[:0], uint64(i))
+		value := encodeForDerive(receipts, i, valueBuf)
+		trie.Update(indexBuf, value)
+	}
+	if receipts.Len() > 0 {
+		indexBuf = rlp.AppendUint64(indexBuf[:0], 0)
+		value := encodeForDerive(receipts, 0, valueBuf)
+		trie.Update(indexBuf, value)
+	}
+	for i := 0x80; i < receipts.Len(); i++ {
+		indexBuf = rlp.AppendUint64(indexBuf[:0], uint64(i))
+		value := encodeForDerive(receipts, i, valueBuf)
+		trie.Update(indexBuf, value)
+	}
+	return trie, nil
 }
 
 func newProofOf(trie *trie.Trie, key []byte) ([][]byte, error) {
@@ -809,8 +849,8 @@ func newProofOf(trie *trie.Trie, key []byte) ([][]byte, error) {
 func ToVerifierStatus(blob []byte) *VerifierStatus {
 	vs := &VerifierStatus{}
 	if err := rlp.DecodeBytes(blob, vs); err != nil {
-		panic(fmt.Sprintf("fail to decode verifier status - blob(%s) err(%s)\n",
-			hex.EncodeToString(blob), err.Error()))
+		panic(fmt.Sprintf("fail to decode verifier status - blob(%s) err(%+v)\n",
+			hex.EncodeToString(blob), err))
 	}
 	return vs
 }
