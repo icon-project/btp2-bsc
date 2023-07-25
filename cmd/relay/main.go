@@ -29,7 +29,8 @@ import (
 	"github.com/icon-project/btp2/common/log"
 	"github.com/icon-project/btp2/common/relay"
 
-	bsc "github.com/icon-project/btp2-bsc/chain/bsc2"
+	"github.com/icon-project/btp2-bsc/chain/bsc"
+	"github.com/icon-project/btp2-bsc/chain/bsc2"
 )
 
 var (
@@ -50,7 +51,8 @@ var logoLines = []string{
 
 func init() {
 	btp2.RegisterIconBtp2()
-	bsc.RegisterBscPlato()
+	bsc.RegisterBscLuban()
+	bsc2.RegisterBscPlato()
 }
 
 func main() {
