@@ -176,7 +176,7 @@ type MessageTx interface {
 	Raw() *btp.RelayResult
 }
 
-func newMessageTx(id int, from string, client *Client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
+func newMessageTx(id string, from string, client *Client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
 	log.Infof("NewMessage - ID(%d) FROM(%s)", id, from)
 	return &CreatedMessage{
 		log:    log,
@@ -190,7 +190,7 @@ func newMessageTx(id int, from string, client *Client, opts *bind.TransactOpts, 
 
 type CreatedMessage struct {
 	log    log.Logger
-	id     int
+	id     string
 	from   string
 	client *Client
 	opts   *bind.TransactOpts
@@ -254,7 +254,7 @@ func (o *CreatedMessage) Raw() *btp.RelayResult {
 
 type PendingMessage struct {
 	log    log.Logger
-	id     int
+	id     string
 	tx     *types.Transaction
 	client *Client
 }
@@ -399,7 +399,7 @@ func (o *ExecutingMessage) Status() uint64 {
 
 type ExecutedMessage struct {
 	log    log.Logger
-	id     int
+	id     string
 	number uint64
 	hash   common.Hash
 	tx     common.Hash
@@ -447,7 +447,7 @@ func (o *FinalizedMessage) Raw() *btp.RelayResult {
 }
 
 type DroppedMessage struct {
-	id   int
+	id   string
 	err  error
 	prev MessageType
 	log  log.Logger
@@ -471,7 +471,7 @@ func (o *DroppedMessage) Raw() *btp.RelayResult {
 }
 
 type FaultedMessage struct {
-	id   int
+	id   string
 	err  error
 	prev MessageType
 	log  log.Logger

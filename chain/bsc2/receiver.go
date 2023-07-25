@@ -67,7 +67,7 @@ type receiver struct {
 	log         log.Logger
 }
 
-func NewReceiver(config RecvConfig, log log.Logger) *receiver {
+func newReceiver(config RecvConfig, log log.Logger) *receiver {
 	o := &receiver{
 		chainId:     new(big.Int).SetUint64(config.ChainID),
 		epoch:       config.Epoch,
@@ -118,8 +118,8 @@ func NewReceiver(config RecvConfig, log log.Logger) *receiver {
 	return o
 }
 
-func (o *receiver) Start(peer *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, error) {
-	och := make(chan link.ReceiveStatus)
+func (o *receiver) Start(peer *btp.BMCLinkStatus) (<-chan interface{}, error) {
+	och := make(chan interface{})
 	o.local = newStatus(peer)
 	o.peer = newStatus(peer)
 	o.log.Infof("peer bmc status - block(%d:%s), sequence(%d)",
@@ -232,7 +232,7 @@ func (o *receiver) calcLatestFinality(calc *BlockFinalityCalculator, feed common
 
 var ErrInconsistentCount = 0
 
-func (o *receiver) loop(hash common.Hash, och chan<- link.ReceiveStatus) error {
+func (o *receiver) loop(hash common.Hash, och chan<- interface{}) error {
 	o.log.Tracef("StartReceiverLoop")
 	headCh := make(chan *types.Header)
 	calc := newBlockFinalityCalculator(hash, make([]common.Hash, 0), o.snapshots, o.log)

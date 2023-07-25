@@ -67,7 +67,7 @@ type receiver struct {
 	log log.Logger
 }
 
-func NewReceiver(config RecvConfig, log log.Logger) *receiver {
+func newReceiver(config RecvConfig, log log.Logger) *receiver {
 	o := &receiver{
 		chainId: new(big.Int).SetUint64(config.ChainID),
 		epoch:   config.Epoch,
@@ -117,13 +117,13 @@ func NewReceiver(config RecvConfig, log log.Logger) *receiver {
 	return o
 }
 
-func (o *receiver) Start(status *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, error) {
+func (o *receiver) Start(status *btp.BMCLinkStatus) (<-chan interface{}, error) {
 
 	finnum := status.Verifier.Height
 	finseq := status.RxSeq
 	o.log.Infof("current verifier status - height(%d) rx(%d)\n", finnum, finseq)
 
-	och := make(chan link.ReceiveStatus)
+	och := make(chan interface{})
 	o.status = srcStatus{
 		finnum:   uint64(finnum),
 		curnum:   uint64(finnum),
@@ -181,7 +181,7 @@ func (o *receiver) Start(status *btp.BMCLinkStatus) (<-chan link.ReceiveStatus, 
 	return och, nil
 }
 
-func (o *receiver) loop(height, sequence int64, snap *Snapshot, och chan<- link.ReceiveStatus) {
+func (o *receiver) loop(height, sequence int64, snap *Snapshot, och chan<- interface{}) {
 	// watch new head & messages
 	headCh := make(chan *types.Header)
 	calc := newBlockFinalityCalculator(o.epoch, snap, o.snapshots, o.log)
@@ -242,7 +242,7 @@ func (o *receiver) loop(height, sequence int64, snap *Snapshot, och chan<- link.
 	}
 }
 
-func (o *receiver) updateAndSendReceiverStatus(finnum, sequence, curnum *big.Int, ch chan<- link.ReceiveStatus) {
+func (o *receiver) updateAndSendReceiverStatus(finnum, sequence, curnum *big.Int, ch chan<- interface{}) {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 	if curnum != nil && o.status.curnum != curnum.Uint64() {
