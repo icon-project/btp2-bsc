@@ -1,4 +1,4 @@
-package bsc
+package bsc2
 
 import (
 	"context"

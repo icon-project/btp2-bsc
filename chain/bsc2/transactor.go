@@ -1,4 +1,4 @@
-package bsc
+package bsc2
 
 import (
 	"context"
@@ -176,8 +176,8 @@ type MessageTx interface {
 	Raw() *btp.RelayResult
 }
 
-func newMessageTx(id int, from string, client *Client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
-	log.Infof("NewMessage - ID(%d) FROM(%s)", id, from)
+func newMessageTx(id string, from string, client *Client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
+	log.Infof("NewMessage - ID(%s) FROM(%s)", id, from)
 	return &CreatedMessage{
 		log:    log,
 		id:     id,
@@ -190,7 +190,7 @@ func newMessageTx(id int, from string, client *Client, opts *bind.TransactOpts, 
 
 type CreatedMessage struct {
 	log    log.Logger
-	id     int
+	id     string
 	from   string
 	client *Client
 	opts   *bind.TransactOpts
@@ -208,7 +208,7 @@ func (o *CreatedMessage) Transit() MessageTx {
 			if tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob); err != nil {
 				o.log.Errorf("fail to estimate gas - err(%+v) retry(%d)", err, ErrCounter)
 				if ErrCounter >= 10 {
-					o.log.Warnf("MessageTransition(C->D) ID(%d) Blob(%s) Err(%s)",
+					o.log.Warnf("MessageTransition(C->D) ID(%s) Blob(%s) Err(%s)",
 						o.id, hex.EncodeToString(o.blob), err.Error())
 					return &DroppedMessage{
 						id:  o.id,
@@ -229,7 +229,7 @@ func (o *CreatedMessage) Transit() MessageTx {
 
 	tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob)
 	if err != nil {
-		o.log.Warnf("MessageTransition(C->D) ID(%d) Blob(%s) Err(%s)",
+		o.log.Warnf("MessageTransition(C->D) ID(%s) Blob(%s) Err(%s)",
 			o.id, hex.EncodeToString(o.blob), err.Error())
 		return &DroppedMessage{
 			id:  o.id,
@@ -237,7 +237,7 @@ func (o *CreatedMessage) Transit() MessageTx {
 			log: o.log,
 		}
 	} else {
-		o.log.Debugf("MessageTransition(C->P) ID(%d) Tx(%s)", o.id, tx.Hash().Hex())
+		o.log.Debugf("MessageTransition(C->P) ID(%s) Tx(%s)", o.id, tx.Hash().Hex())
 		return &PendingMessage{
 			log:    o.log,
 			id:     o.id,
@@ -254,7 +254,7 @@ func (o *CreatedMessage) Raw() *btp.RelayResult {
 
 type PendingMessage struct {
 	log    log.Logger
-	id     int
+	id     string
 	tx     *types.Transaction
 	client *Client
 }
@@ -281,7 +281,7 @@ func (o *PendingMessage) Transit() MessageTx {
 				o.log.Debugf("retry to query not found transaction")
 				continue
 			}
-			o.log.Warnf("MessageTransition(P->D) ID(%d) Tx(%s)", o.id, hash.Hex())
+			o.log.Warnf("MessageTransition(P->D) ID(%s) Tx(%s)", o.id, hash.Hex())
 			return &DroppedMessage{
 				id:   o.id,
 				err:  errors.New("DroppedByTxPool"),
@@ -289,7 +289,7 @@ func (o *PendingMessage) Transit() MessageTx {
 				log:  o.log,
 			}
 		} else if err != nil {
-			o.log.Warnf("MessageTransition(P->F) ID(%d) Tx(%s)", o.id, hash.Hex(), err.Error())
+			o.log.Warnf("MessageTransition(P->F) ID(%s) Tx(%s)", o.id, hash.Hex(), err.Error())
 			return &FaultedMessage{
 				id:   o.id,
 				err:  errors.New("TxQueryFailure"),
@@ -301,7 +301,7 @@ func (o *PendingMessage) Transit() MessageTx {
 	}
 
 	if pending {
-		o.log.Warnf("MessageTransition(P->F) ID(%d) Tx(%s) Err(Timeout)", o.id, hash.Hex())
+		o.log.Warnf("MessageTransition(P->F) ID(%s) Tx(%s) Err(Timeout)", o.id, hash.Hex())
 		return &FaultedMessage{
 			id:  o.id,
 			err: errors.New(fmt.Sprintf("TxPoolTimeout:%s", hash.Hex())),
@@ -311,7 +311,7 @@ func (o *PendingMessage) Transit() MessageTx {
 
 	receipt, err := o.client.TransactionReceipt(context.Background(), hash)
 	if err != nil {
-		o.log.Warnf("MessageTransition(P->F) ID(%d) Tx(%s) Err(NoReceipt:%+v)", o.id, hash.Hex(), err)
+		o.log.Warnf("MessageTransition(P->F) ID(%s) Tx(%s) Err(NoReceipt:%+v)", o.id, hash.Hex(), err)
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("ReceiptQueryFailure"),
@@ -320,7 +320,7 @@ func (o *PendingMessage) Transit() MessageTx {
 		}
 	}
 
-	o.log.Infof("MessageTransition(P->E) ID(%d) Tx(%s)", o.id, hash.Hex())
+	o.log.Infof("MessageTransition(P->E) ID(%s) Tx(%s)", o.id, hash.Hex())
 	return &ExecutingMessage{
 		PendingMessage: o,
 		receipt:        receipt,
@@ -338,7 +338,7 @@ func (o *ExecutingMessage) Type() MessageType {
 
 func (o *ExecutingMessage) Transit() MessageTx {
 	if o.receipt.Status == types.ReceiptStatusSuccessful {
-		o.log.Infof("MessageTransition(E->EE) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Infof("MessageTransition(E->EE) ID(%s) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &ExecutedMessage{
 			id:     o.id,
 			number: o.receipt.BlockNumber.Uint64(),
@@ -351,7 +351,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 
 	from, err := types.Sender(types.NewEIP155Signer(o.tx.ChainId()), o.tx)
 	if err != nil {
-		o.log.Errorf("MessageTransition(E->F) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Errorf("MessageTransition(E->F) ID(%s) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("TxSenderRecoveryFailure"),
@@ -368,7 +368,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 		Value:    o.tx.Value(),
 		Data:     o.tx.Data(),
 	}, o.receipt.BlockNumber); err != nil {
-		o.log.Infof("MessageTransition(E->EE) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Infof("MessageTransition(E->EE) ID(%s) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &ExecutedMessage{
 			id:     o.id,
 			number: o.receipt.BlockNumber.Uint64(),
@@ -378,7 +378,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 			log:    o.log,
 		}
 	} else {
-		o.log.Warnf("MessageTransition(E->F) ID(%d) Tx(%s) Err(EmulRevertFailure)", o.id, o.tx.Hash().Hex())
+		o.log.Warnf("MessageTransition(E->F) ID(%s) Tx(%s) Err(EmulRevertFailure)", o.id, o.tx.Hash().Hex())
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("EmulRevertFailure"),
@@ -399,7 +399,7 @@ func (o *ExecutingMessage) Status() uint64 {
 
 type ExecutedMessage struct {
 	log    log.Logger
-	id     int
+	id     string
 	number uint64
 	hash   common.Hash
 	tx     common.Hash
@@ -411,7 +411,7 @@ func (o *ExecutedMessage) Type() MessageType {
 }
 
 func (o *ExecutedMessage) Transit() MessageTx {
-	o.log.Infof("MessageTransition(EE->FN) ID(%d) Tx(%s)", o.id, o.tx.Hex())
+	o.log.Infof("MessageTransition(EE->FN) ID(%s) Tx(%s)", o.id, o.tx.Hex())
 	return &FinalizedMessage{o}
 }
 
@@ -447,7 +447,7 @@ func (o *FinalizedMessage) Raw() *btp.RelayResult {
 }
 
 type DroppedMessage struct {
-	id   int
+	id   string
 	err  error
 	prev MessageType
 	log  log.Logger
@@ -471,7 +471,7 @@ func (o *DroppedMessage) Raw() *btp.RelayResult {
 }
 
 type FaultedMessage struct {
-	id   int
+	id   string
 	err  error
 	prev MessageType
 	log  log.Logger
