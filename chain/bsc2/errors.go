@@ -1,4 +1,4 @@
-package bsc2
+package bsc
 
 import "errors"
 

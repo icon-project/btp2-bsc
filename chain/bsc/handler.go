@@ -171,8 +171,8 @@ type MessageTx interface {
 	Raw() *btp.RelayResult
 }
 
-func newMessageTx(id string, from string, client *Client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
-	log.Debugf("new message tx - id(%s)", id)
+func newMessageTx(id int, from string, client *Client, opts *bind.TransactOpts, blob []byte, log log.Logger) MessageTx {
+	log.Debugf("new message tx - id(%d)", id)
 	return &CreatedMessage{
 		log:    log,
 		id:     id,
@@ -185,7 +185,7 @@ func newMessageTx(id string, from string, client *Client, opts *bind.TransactOpt
 
 type CreatedMessage struct {
 	log    log.Logger
-	id     string
+	id     int
 	from   string
 	client *Client
 	opts   *bind.TransactOpts
@@ -199,13 +199,13 @@ func (o *CreatedMessage) Type() MessageType {
 func (o *CreatedMessage) Transit() MessageTx {
 	o.log.Tracef("CreatedMessage blob(%s)", hex.EncodeToString(o.blob))
 	if tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob); err != nil {
-		o.log.Debugf("MessageTransition(C->D) ID(%s) Err(%s)", o.id, err.Error())
+		o.log.Debugf("MessageTransition(C->D) ID(%d) Err(%s)", o.id, err.Error())
 		return &DroppedMessage{
 			id:  o.id,
 			err: err,
 		}
 	} else {
-		o.log.Debugf("MessageTransition(C->P) ID(%s) Tx(%s)", o.id, tx.Hash().Hex())
+		o.log.Debugf("MessageTransition(C->P) ID(%d) Tx(%s)", o.id, tx.Hash().Hex())
 		return &PendingMessage{
 			log:    o.log,
 			id:     o.id,
@@ -221,7 +221,7 @@ func (o *CreatedMessage) Raw() *btp.RelayResult {
 
 type PendingMessage struct {
 	log    log.Logger
-	id     string
+	id     int
 	tx     *types.Transaction
 	client *Client
 }
@@ -244,7 +244,7 @@ func (o *PendingMessage) Transit() MessageTx {
 		_, pending, err = o.client.TransactionByHash(context.Background(), hash)
 		if err == ethereum.NotFound {
 			o.log.Warnf("message dropped - hash(%s)", hash.Hex())
-			o.log.Debugf("MessageTransition(P->D) ID(%s) Tx(%s)", o.id, hash.Hex())
+			o.log.Debugf("MessageTransition(P->D) ID(%d) Tx(%s)", o.id, hash.Hex())
 			return &DroppedMessage{
 				id:   o.id,
 				err:  errors.New("DroppedByTxPool"),
@@ -252,7 +252,7 @@ func (o *PendingMessage) Transit() MessageTx {
 			}
 		} else if err != nil {
 			o.log.Errorf("fail to query transaction - hash(%s) err(%s)", hash.Hex(), err.Error())
-			o.log.Debugf("MessageTransition(P->F) ID(%s) Tx(%s)", o.id, hash.Hex())
+			o.log.Debugf("MessageTransition(P->F) ID(%d) Tx(%s)", o.id, hash.Hex())
 			return &FaultedMessage{
 				id:   o.id,
 				err:  errors.New("TxQueryFailure"),
@@ -263,7 +263,7 @@ func (o *PendingMessage) Transit() MessageTx {
 	}
 
 	if pending {
-		o.log.Debugf("MessageTransition(P->F) ID(%s) Tx(%s)", o.id, hash.Hex())
+		o.log.Debugf("MessageTransition(P->F) ID(%d) Tx(%s)", o.id, hash.Hex())
 		return &FaultedMessage{
 			id:  o.id,
 			err: errors.New(fmt.Sprintf("TxPoolTimeout:%s", hash.Hex())),
@@ -273,7 +273,7 @@ func (o *PendingMessage) Transit() MessageTx {
 	receipt, err := o.client.TransactionReceipt(context.Background(), hash)
 	if err != nil {
 		o.log.Errorf("fail to fetch receipt - hash(%s)", hash.Hex())
-		o.log.Debugf("MessageTransition(P->F) ID(%s) Tx(%s)", o.id, hash.Hex())
+		o.log.Debugf("MessageTransition(P->F) ID(%d) Tx(%s)", o.id, hash.Hex())
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("ReceiptQueryFailure"),
@@ -281,7 +281,7 @@ func (o *PendingMessage) Transit() MessageTx {
 		}
 	}
 
-	o.log.Debugf("MessageTransition(P->E) ID(%s) Tx(%s)", o.id, hash.Hex())
+	o.log.Debugf("MessageTransition(P->E) ID(%d) Tx(%s)", o.id, hash.Hex())
 	return &ExecutingMessage{
 		PendingMessage: o,
 		receipt:        receipt,
@@ -299,7 +299,7 @@ func (o *ExecutingMessage) Type() MessageType {
 
 func (o *ExecutingMessage) Transit() MessageTx {
 	if o.receipt.Status == types.ReceiptStatusSuccessful {
-		o.log.Debugf("MessageTransition(E->EE) ID(%s) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Debugf("MessageTransition(E->EE) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &ExecutedMessage{
 			id:     o.id,
 			number: o.receipt.BlockNumber.Uint64(),
@@ -312,7 +312,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 
 	from, err := types.Sender(types.NewEIP155Signer(o.tx.ChainId()), o.tx)
 	if err != nil {
-		o.log.Debugf("MessageTransition(E->F) ID(%s) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Debugf("MessageTransition(E->F) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("TxSenderRecoveryFailure"),
@@ -328,7 +328,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 		Value:    o.tx.Value(),
 		Data:     o.tx.Data(),
 	}, o.receipt.BlockNumber); err != nil {
-		o.log.Debugf("MessageTransition(E->EE) ID(%s) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Debugf("MessageTransition(E->EE) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &ExecutedMessage{
 			id:     o.id,
 			number: o.receipt.BlockNumber.Uint64(),
@@ -338,7 +338,7 @@ func (o *ExecutingMessage) Transit() MessageTx {
 			log:    o.log,
 		}
 	} else {
-		o.log.Debugf("MessageTransition(E->F) ID(%s) Tx(%s)", o.id, o.tx.Hash().Hex())
+		o.log.Debugf("MessageTransition(E->F) ID(%d) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &FaultedMessage{
 			id:   o.id,
 			err:  errors.New("EmulRevertFailure"),
@@ -357,7 +357,7 @@ func (o *ExecutingMessage) Status() uint64 {
 
 type ExecutedMessage struct {
 	log    log.Logger
-	id     string
+	id     int
 	number uint64
 	hash   common.Hash
 	tx     common.Hash
@@ -369,7 +369,7 @@ func (o *ExecutedMessage) Type() MessageType {
 }
 
 func (o *ExecutedMessage) Transit() MessageTx {
-	o.log.Debugf("MessageTransition(EE->FN) ID(%s) Tx(%s)", o.id, o.tx.Hex())
+	o.log.Debugf("MessageTransition(EE->FN) ID(%d) Tx(%s)", o.id, o.tx.Hex())
 	return &FinalizedMessage{
 		o,
 	}
@@ -406,7 +406,7 @@ func (o *FinalizedMessage) Raw() *btp.RelayResult {
 }
 
 type DroppedMessage struct {
-	id   string
+	id   int
 	err  error
 	prev MessageType
 }
@@ -428,7 +428,7 @@ func (o *DroppedMessage) Raw() *btp.RelayResult {
 }
 
 type FaultedMessage struct {
-	id   string
+	id   int
 	err  error
 	prev MessageType
 }
