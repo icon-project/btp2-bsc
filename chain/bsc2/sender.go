@@ -1,4 +1,4 @@
-package bsc
+package bsc2
 
 import (
 	"context"
@@ -38,7 +38,7 @@ type sender struct {
 	finality   *Snapshot
 	snapshots  *Snapshots
 	log        log.Logger
-	wallet     wallet.Wallet
+	wallet     btp.Wallet
 	transactor *MessageTransactor
 }
 
@@ -50,7 +50,7 @@ type SenderConfig struct {
 	Epoch      uint64
 }
 
-func NewSender(config SenderConfig, wallet wallet.Wallet, log log.Logger) btp.Sender {
+func newSender(config SenderConfig, wallet btp.Wallet, log log.Logger) btp.Sender {
 	o := &sender{
 		src:     config.SrcAddress,
 		dst:     config.DstAddress,
@@ -192,31 +192,32 @@ func (o *sender) GetStatus() (*btp.BMCLinkStatus, error) {
 	}
 }
 
-func (o *sender) Relay(rm btp.RelayMessage) (int, error) {
+func (o *sender) Relay(rm btp.RelayMessage) (string, error) {
 	o.log.Traceln("++Sender::Relay")
 	defer o.log.Traceln("--Sender::Relay")
 	if o.transactor.Busy() {
 		o.log.Traceln("SenderBusy")
-		return 0, errors.ErrInvalidState
+		return "", errors.ErrInvalidState
 	}
 
 	opts, err := bind.NewKeyedTransactorWithChainID(o.wallet.(*wallet.EvmWallet).Skey, o.chainId)
 	if err != nil {
 		o.log.Errorf("fail to make signed transaction - err(%+v)", err)
-		return 0, err
+		return "", err
 	}
 	o.transactor.Send(newMessageTx(rm.Id(), o.src.String(), o.client, opts, rm.Bytes(), o.log))
-	return 0, nil
+	return rm.Id(), nil
 }
 
-func (o *sender) GetMarginForLimit() int64 {
-	o.log.Traceln("++Sender::GetMargin")
-	defer o.log.Traceln("--Sender::GetMargin")
-	return 0
-}
+func (o *sender) GetPreference() btp.Preference {
+	o.log.Traceln("++Sender::GetPreference")
+	defer o.log.Traceln("--Sender::GetPreference")
+	p := btp.Preference{
+		TxSizeLimit:       int64(txSizeLimit),
+		MarginForLimit:    int64(0),
+		LatestResult:      false,
+		FilledBlockUpdate: false,
+	}
 
-func (o *sender) TxSizeLimit() int {
-	o.log.Traceln("++Sender::TxSizeLimi")
-	defer o.log.Traceln("--Sender::TxSizeLimi")
-	return txSizeLimit
+	return p
 }
