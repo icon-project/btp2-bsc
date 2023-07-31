@@ -13,7 +13,7 @@ go 1.19
 require (
 	github.com/ethereum/go-ethereum v1.11.3
 	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d
-	github.com/icon-project/btp2 v1.0.3
+	github.com/icon-project/btp2 v1.0.3-0.20230725023032-146bb5f80bd2
 	github.com/spf13/cobra v1.6.1
 	golang.org/x/crypto v0.5.0
 	golang.org/x/exp v0.0.0-20230206171751-46f607a40771

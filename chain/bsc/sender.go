@@ -39,7 +39,7 @@ type sender struct {
 	finality  *Snapshot
 	snapshots *Snapshots
 	log       log.Logger
-	wallet    wallet.Wallet
+	wallet    btp.Wallet
 	handler   *MessageTxHandler
 }
 
@@ -51,7 +51,7 @@ type SenderConfig struct {
 	Epoch      uint64
 }
 
-func NewSender(config SenderConfig, wallet wallet.Wallet, log log.Logger) btp.Sender {
+func newSender(config SenderConfig, wallet btp.Wallet, log log.Logger) btp.Sender {
 	o := &sender{
 		src:     config.SrcAddress,
 		dst:     config.DstAddress,
@@ -172,23 +172,28 @@ func (o *sender) GetStatus() (*btp.BMCLinkStatus, error) {
 	}
 }
 
-func (o *sender) Relay(rm btp.RelayMessage) (int, error) {
+func (o *sender) Relay(rm btp.RelayMessage) (string, error) {
 	if o.handler.Busy() {
-		return 0, errors.InvalidStateError
+		return "", errors.ErrInvalidState
 	}
 
 	if opts, err := bind.NewKeyedTransactorWithChainID(o.wallet.(*wallet.EvmWallet).Skey, o.chainId); err != nil {
-		return 0, err
+		return "", err
 	} else {
 		o.handler.Send(newMessageTx(rm.Id(), o.src.String(), o.client, opts, rm.Bytes(), o.log))
-		return 0, nil
+		return rm.Id(), nil
 	}
 }
 
-func (o *sender) GetMarginForLimit() int64 {
-	return 0
-}
+func (o *sender) GetPreference() btp.Preference {
+	o.log.Traceln("++Sender::GetPreference")
+	defer o.log.Traceln("--Sender::GetPreference")
+	p := btp.Preference{
+		TxSizeLimit:       int64(txSizeLimit),
+		MarginForLimit:    int64(0),
+		LatestResult:      false,
+		FilledBlockUpdate: false,
+	}
 
-func (o *sender) TxSizeLimit() int {
-	return txSizeLimit
+	return p
 }
