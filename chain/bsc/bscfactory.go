@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	TYPE  = "bsc-luban-solidity"
+	TYPE  = "bsc-luban"
 	Epoch = 200
 )
 
@@ -22,7 +22,6 @@ func RegisterBscLuban() {
 	link.RegisterFactory(&link.Factory{
 		Type:             TYPE,
 		ParseChainConfig: ParseChainConfig,
-		NewLink:          NewLink,
 		NewReceiver:      NewReceiver,
 		NewSender:        NewSender,
 	})
@@ -30,36 +29,16 @@ func RegisterBscLuban() {
 
 func ParseChainConfig(raw json.RawMessage) (link.ChainConfig, error) {
 	cfg := chain.BaseConfig{}
-
-	jsonbody, err := json.Marshal(raw)
-	if err != nil {
+	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, err
 	}
-
-	if err := json.Unmarshal(jsonbody, &cfg); err != nil {
-		return nil, err
+	if cfg.Type != TYPE {
+		return nil, fmt.Errorf("invalid type (type:%s)", cfg.Type)
 	}
-
-	//TODO add check
-	if cfg.Type == TYPE {
-		return cfg, nil
-	}
-
-	return nil, nil
-}
-
-func NewLink(srcCfg link.ChainConfig, dstAddr types.BtpAddress, baseDir string, l log.Logger) (types.Link, error) {
-	r, err := NewReceiver(srcCfg, dstAddr, baseDir, l)
-	if err != nil {
-		return nil, err
-	}
-
-	link := link.NewLink(srcCfg, r, l)
-	return link, nil
+	return cfg, nil
 }
 
 func NewReceiver(srcCfg link.ChainConfig, dstAddr types.BtpAddress, baseDir string, l log.Logger) (link.Receiver, error) {
-	//TODO config
 	src := srcCfg.(chain.BaseConfig)
 
 	return newReceiver(RecvConfig{
@@ -76,12 +55,10 @@ func NewReceiver(srcCfg link.ChainConfig, dstAddr types.BtpAddress, baseDir stri
 
 func NewSender(srcAddr types.BtpAddress, dstCfg link.ChainConfig, l log.Logger) (types.Sender, error) {
 	dst := dstCfg.(chain.BaseConfig)
-
-	w, err := newWallet(dst.KeyStorePass, dst.KeySecret, dst.KeyStoreData)
+	w, err := newWallet(dst.KeyStorePass, dst.KeySecret, dst.KeyStore)
 	if err != nil {
 		return nil, err
 	}
-
 	return newSender(SenderConfig{
 		SrcAddress: srcAddr,
 		DstAddress: dst.Address,
@@ -90,12 +67,16 @@ func NewSender(srcAddr types.BtpAddress, dstCfg link.ChainConfig, l log.Logger) 
 		Epoch:      uint64(Epoch)}, w, l), nil
 }
 
-func newWallet(passwd, secret string, keyStore json.RawMessage) (types.Wallet, error) {
-	pw, err := resolvePassword(secret, passwd)
-	if err != nil {
-		return nil, err
+func newWallet(passwd, secret string, keyStorePath string) (types.Wallet, error) {
+	if keyStore, err := os.ReadFile(keyStorePath); err != nil {
+		return nil, fmt.Errorf("fail to open KeyStore file path=%s", keyStorePath)
+	} else {
+		pw, err := resolvePassword(secret, passwd)
+		if err != nil {
+			return nil, err
+		}
+		return wallet.DecryptKeyStore(keyStore, pw)
 	}
-	return wallet.DecryptKeyStore(keyStore, pw)
 }
 
 func resolvePassword(keySecret, keyStorePass string) ([]byte, error) {
