@@ -74,10 +74,10 @@ async function deploy_bmv_jav(srcNetwork: IconNetwork, srcChain: any, params: an
 const ValidatorBytesLength = 20 *2;
 
 async function headByNumber(number: number) {
-    return await ethers.provider.send('eth_getHeaderByNumber', ['0x' + number.toString(16)]);
+    return await ethers.provider.send('eth_getBlockByNumber', ['0x' + number.toString(16), false]);
 }
 
-async function genJavBmvParamsForLuban(bmc: string, number: number) {
+async function genJavBmvParams(bmc: string, number: number) {
   const curnum = number != undefined ? number : await ethers.provider.getBlockNumber();
   const tarnum = curnum - curnum % EPOCH;
   console.log('trusted block number:', tarnum);
@@ -112,7 +112,8 @@ async function genJavBmvParamsForLuban(bmc: string, number: number) {
         curr.timestamp,
         curr.extraData,
         curr.mixHash,
-        curr.nonce
+        curr.nonce,
+        curr.baseFeePerGas
       ])).toString('hex'),
       _recents: Buffer.from(rlp.encode(recents)).toString('hex'),
       _candidates: Buffer.from(rlp.encode(candidates)).toString('hex'),
@@ -228,7 +229,7 @@ async function setup_link_sol(src: string, srcChain: any, dstChain: any) {
   await open_btp_network(dst, src, dstChain);
 
   console.log('srcChain:', srcChain, 'dstChain:', dstChain);
-  let params = await genJavBmvParamsForLuban(dstChain.contracts.bmc, 400);
+  let params = await genJavBmvParams(dstChain.contracts.bmc);
   console.log('bmv deployment args:', params);
   await deploy_bmv_sol(src, dst, srcChain, dstChain);
   console.log('try jav deploy');
