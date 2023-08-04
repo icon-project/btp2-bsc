@@ -1,7 +1,7 @@
 version: "3"
 services:
   icon-node:
-    image: iconloop/goloop-icon:v1.3.4
+    image: iconloop/goloop-icon:v1.3.8
     container_name: "icon-node"
     environment:
       GOLOOP_LOG_LEVEL: "trace"
