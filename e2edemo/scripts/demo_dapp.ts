@@ -219,7 +219,7 @@ async function checkCallMessage(dst: string, srcChain: any, dstChain: any, sn: B
 async function invokeExecuteCall(dst: string, dstChain: any, reqId: BigNumber, data: string) {
   if (isEVMChain(dstChain)) {
     const xcallDst = await ethers.getContractAt('CallService', dstChain.contracts.xcall);
-    return await xcallDst.executeCall(reqId, data, {gasLimit: 300000})
+    return await xcallDst.executeCall(reqId, data, {gasLimit: 600000})
       .then((tx) => tx.wait(DEFAULT_CONFIRMATIONS))
       .then((receipt) => {
         if (receipt.status != 1) {
