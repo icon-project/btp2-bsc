@@ -1,11 +1,19 @@
 version: "3"
 
 services:
-  node1:
+  node0:
     image: bsc-geth:docker-local
     env_file: .env
     ports:
       - 8545:8545
+    volumes:
+      - ./storage/node0:/root/.ethereum
+      - ./scripts:/scripts
+    command: ash /scripts/start.sh
+
+  node1:
+    image: bsc-geth:docker-local
+    env_file: .env
     volumes:
       - ./storage/node1:/root/.ethereum
       - ./scripts:/scripts
@@ -16,14 +24,6 @@ services:
     env_file: .env
     volumes:
       - ./storage/node2:/root/.ethereum
-      - ./scripts:/scripts
-    command: ash /scripts/start.sh
-
-  node3:
-    image: bsc-geth:docker-local
-    env_file: .env
-    volumes:
-      - ./storage/node3:/root/.ethereum
       - ./scripts:/scripts
     command: ash /scripts/start.sh
 

@@ -41,6 +41,11 @@ function generate_genesis() {
 
     node generate-validator.js
     node generate-genesis.js --chainid ${BSC_CHAIN_ID} --bscChainId "$(printf '%04x\n' ${BSC_CHAIN_ID})"
+    cat genesis.json
+    echo "pwd: $(pwd)"
+    cat genesis.json | jq '.config.berlinBlock=8 | .config.londonBlock=8 | .config.hertzBlock=8' > genesis.json.tmp && mv genesis.json.tmp genesis.json
+    #geth init-network --init.dir ${workspace}/storage/ --init.size 3 --config ${workspace}/config/config.toml ${workspace}/genesis/genesis.json
+    echo "init-network"
 }
 
 function init_genesis_data() {
@@ -48,6 +53,8 @@ function init_genesis_data() {
     name=$1
     nth=$2
 
+    echo "Init Genesis"
+    cat ${workspace}/genesis/genesis.json
     geth --datadir ${workspace}/storage/${name} init ${workspace}/genesis/genesis.json
     cp ${workspace}/config/config.toml ${workspace}/storage/${name}/config.toml
     sed -i -e "s/{{NetworkId}}/${BSC_CHAIN_ID}/g" ${workspace}/storage/${name}/config.toml
@@ -57,7 +64,7 @@ function update_static_peers() {
     num=$1
     target=$2
     staticPeers=""
-    for ((j=1;j<=$num;j++)); do
+    for ((j=0;j<$num;j++)); do
         if [ $j -eq $target ]
         then
            continue
@@ -78,14 +85,14 @@ function update_static_peers() {
 }
 
 prepare
-for((i=1;i<=${NUMS_OF_VALIDATOR};i++)); do
+for((i=0;i<${NUMS_OF_VALIDATOR};i++)); do
      init_validator "node${i}"
 done
 generate_genesis
-for((i=1;i<=${NUMS_OF_VALIDATOR};i++)); do
+for((i=0;i<${NUMS_OF_VALIDATOR};i++)); do
      init_genesis_data "node${i}" ${i}
 done
-for((i=1;i<=${NUMS_OF_VALIDATOR};i++)); do
+for((i=0;i<${NUMS_OF_VALIDATOR};i++)); do
     update_static_peers ${NUMS_OF_VALIDATOR} ${i}
 done
 echo "[COMPLETE] Network Bootstrap"
