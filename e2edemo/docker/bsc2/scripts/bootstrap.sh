@@ -32,7 +32,7 @@ function init_validator() {
 
 function generate_genesis() {
     echo "[GENERATE_GENESIS]"
-    holder=0x$(cat ${workspace}/config/holder.json | jq .address | sed 's/"//g')
+    holder=0x$(cat ${workspace}/config/keystore.json | jq .address | sed 's/"//g')
     echo "INITIAL HOLDER: $holder"
     sed "s/{{INIT_HOLDER_ADDR}}/${holder}/g" ${workspace}/config/init_holders.template > ${workspace}/genesis/init_holders.js
     sed -i -e "s/numOperator = 2;/operators[VALIDATOR_CONTRACT_ADDR] = true;\noperators[SLASH_CONTRACT_ADDR] = true;\nnumOperator = 4;/g" ${workspace}/genesis/contracts/SystemReward.template

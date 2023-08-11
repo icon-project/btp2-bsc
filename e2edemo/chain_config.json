@@ -3,8 +3,8 @@
     "bsc_localnet": {
         "network": "0x63.bsc",
         "endpoint": "http://localhost:8545",
-        "keystore": "../keystore/bsc-localnet.json",
-        "keypass": " parameta"
+        "keystore": "./docker/bsc2/config/keystore.json",
+        "keypass": "parameta"
     },
     "icon0": {
       "network": "0x3.icon",
