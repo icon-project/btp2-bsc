@@ -1,12 +1,12 @@
 FROM golang:1.19-alpine
 
 ARG GIT_SOURCE
-ARG GIT_CHECKOUT_REF
+ARG GIT_TAG
 
 RUN apk add --no-cache make gcc g++ musl-dev linux-headers git jq
 
 RUN cd / && git clone ${GIT_SOURCE} \
-    && cd ./bsc && git switch -c ${GIT_CHECKOUT_REF} && make geth \
+    && cd ./bsc && git checkout tags/${GIT_TAG} -b ${GIT_TAG} && make geth \
     && env GO111MODULE=on go run build/ci.go install ./cmd/bootnode
 
 RUN mv /bsc/build/bin/geth /usr/local/bin/

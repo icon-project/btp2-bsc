@@ -7,5 +7,5 @@ services:
       dockerfile: Dockerfile.bsc
       args:
         GIT_SOURCE: https://github.com/bnb-chain/bsc.git
-        GIT_CHECKOUT_REF: v1.2.8
+        GIT_TAG: v1.2.8
     image: bsc-geth:docker-local
