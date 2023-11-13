@@ -14,7 +14,7 @@ start:
 start-preset:
 	@if [ ! -d "data" ]; then \
 		echo "Extract preset data"; \
-		unzip -d data preset.zip; \
+		unzip preset.zip; \
 	fi
 	$(OSFLAG) docker-compose -f docker-compose.yml up -d
 

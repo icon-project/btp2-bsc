@@ -28,9 +28,9 @@ start:
 
 .PHONY:start-preset
 start-preset:
-	@if [ ! -d "data" ]; then \
+	@if [ ! -d "storage" ]; then \
 		echo "Extract preset data"; \
-		unzip -d storage preset.zip; \
+		unzip preset.zip; \
 	fi
 	$(OSFLAG) docker-compose -f docker-compose.yml up -d
 
