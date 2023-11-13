@@ -1,0 +1,43 @@
+{
+  "relay_config": {
+    "base_dir": ".",
+    "direction": "both",
+    "log_level": "trace",
+    "console_level": "trace",
+    "log_forwarder": {
+      "vendor": "",
+      "address": "",
+      "level": "trace",
+      "name": ""
+    },
+    "log_writer": {
+      "filename": "/data/relay.log",
+      "maxsize": 100,
+      "maxage": 0,
+      "maxbackups": 0,
+      "localtime": false,
+      "compress": false
+    }
+  },
+  "chains_config": {
+    "src": {
+      "address": "btp://0x63.bsc/0x83257E0d7013Aa3fA1CE328eC5566e51780702BE",
+      "endpoint": "http://localhost:8545",
+      "key_store": "/keystore/bsc2/keystore.json",
+      "key_password": "parameta",
+      "options": {
+        "db_type": "leveldb",
+        "db_path": "/data",
+        "start_number": "600"
+      },
+      "type" : "bsc-hertz"
+    },
+    "dst": {
+      "address": "btp://0x3.icon/cx4d0148985d86900b6a7e8f5b6a4e81100fcdddbc",
+      "endpoint": "http://localhost:9080/api/v3/icon_dex",
+      "key_store": "/keystore/icon/keystore.json",
+      "key_password": "gochain",
+      "type" : "icon-btpblock"
+    }
+  }
+}
