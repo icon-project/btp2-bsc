@@ -112,7 +112,7 @@ or, execution with docker
 docker run -d --network=host -v ${BSC_KEYSTORE_FILE}:${BSC_KEYSTORE_FILE_ON_DOCKER} \
   -v ${ICON_KEYSTORE_FILE}:${ICON_KEYSTORE_FILE_ON_DOCKER} \
   -v ${CONFIG_FILE}:/etc/config/config.json -e RELAY_CONFIG=/etc/config/config.json \
-  -d relay-bsc
+  -d btp2-bsc/relay
 ```
 
 ### Retrieve start block number
