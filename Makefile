@@ -4,21 +4,27 @@
 #
 
 SHELL:=/usr/bin/env sh
+
 # Configuration
 BUILD_ROOT = $(abspath ./)
-BIN_DIR = ./bin
-LINUX_BIN_DIR = ./build/linux
+
+GOOS=$(shell go env GOOS)
+GOARCH=$(shell go env GOARCH)
+
+BUILD_PLATFORM=$(GOOS)-$(GOARCH)
+BUILD_DIR = $(BUILD_ROOT)/build
+CROSSBIN_ROOT=$(BUILD_DIR)/bin
+ifeq ($(CROSS_COMPILE),TRUE)
+BIN_DIR = $(CROSSBIN_ROOT)-$(BUILD_PLATFORM)
+else
+BIN_DIR = $(BUILD_ROOT)/bin
+endif
 
 GOBUILD = go build
 GOBUILD_TAGS =
 GOBUILD_ENVS = CGO_ENABLED=1
 GOBUILD_LDFLAGS =
 GOBUILD_FLAGS = -tags "$(GOBUILD_TAGS)" -ldflags "$(GOBUILD_LDFLAGS)"
-GOBUILD_ENVS_LINUX = $(GOBUILD_ENVS) GOOS=linux GOARCH=amd64
-
-GOCC := CC=$(shell go env CC)
-GOCXX := CXX=$(shell go env CXX)
-UNAME := $(shell uname -m)
 
 GOTEST = go test
 GOTEST_FLAGS = -test.short
@@ -26,7 +32,7 @@ GOTEST_FLAGS = -test.short
 # Build flags
 GL_VERSION ?= $(shell git describe --always --tags --dirty)
 GL_TAG ?= latest
-BUILD_INFO = $(shell go env GOOS)/$(shell go env GOARCH) tags($(GOBUILD_TAGS))-$(shell date '+%Y-%m-%d-%H:%M:%S')
+BUILD_INFO = $(GOOS)/$(GOARCH) tags($(GOBUILD_TAGS))-$(shell date '+%Y-%m-%d-%H:%M:%S')
 #
 # Build scripts for command binaries.
 #
@@ -41,18 +47,6 @@ $(BIN_DIR)/$(1) $(1) :
 	$$(GOBUILD_ENVS) \
 	go build $$(GOBUILD_FLAGS) \
 	    -o $(BIN_DIR)/$(1) ./cmd/$(1)
-$(LINUX_BIN_DIR)/$(1) $(1)-linux : GOBUILD_LDFLAGS+=$$($(1)_LDFLAGS)
-$(LINUX_BIN_DIR)/$(1) $(1)-linux :
-ifeq ($(UNAME), arm64)
-	$(eval GOCC = CC=x86_64-linux-musl-gcc)
-	$(eval GOCXX = CXX=x86_64-linux-musl-g++)
-endif
-	@ \
-	rm -f $(LINUX_BIN_DIR)/$(1) ; \
-	echo "[#] go build ./cmd/$(1)"
-	$$(GOBUILD_ENVS_LINUX) \
-	$(GOCC) $(GOCXX) go build $$(GOBUILD_FLAGS) \
-	    -o $(LINUX_BIN_DIR)/$(1) ./cmd/$(1)
 endef
 $(foreach M,$(CMDS),$(eval $(call CMD_template,$(M))))
 
@@ -60,19 +54,44 @@ $(foreach M,$(CMDS),$(eval $(call CMD_template,$(M))))
 relay_LDFLAGS = -X 'main.version=$(GL_VERSION)' -X 'main.build=$(BUILD_INFO)'
 BUILD_TARGETS += relay
 
-linux : $(addsuffix -linux,$(BUILD_TARGETS))
+IMAGE_REPO = btp2-bsc
 
-RELAY_IMAGE = relay-bsc:$(GL_TAG)
+GODEPS_IMAGE = $(IMAGE_REPO)/go-deps:$(GL_TAG)
+BUILDDEPS_IMAGE = $(GODEPS_IMAGE)
+BUILDDEPS_DOCKER_DIR = $(BUILD_DIR)/builddpes
+
+RELAY_WORK_DIR = /work
+
+RELAY_IMAGE = $(IMAGE_REPO)/relay:$(GL_TAG)
 RELAY_DOCKER_DIR = $(BUILD_ROOT)/build/relay
 
-relay-image: relay-linux
+builddeps-%:
+	@ \
+ 	IMAGE_GO_DEPS=$(GODEPS_IMAGE) \
+	$(BUILD_ROOT)/docker/build-deps/update.sh \
+		$(patsubst builddeps-%,%,$@) \
+	    $(IMAGE_REPO)/$(patsubst builddeps-%,%,$@)-deps:$(GL_TAG) \
+	    $(BUILD_ROOT) $(BUILDDEPS_DOCKER_DIR)
+
+gorun-% : builddeps-go
+	@ \
+	docker run -t --rm \
+	    -v $(BUILD_ROOT):$(RELAY_WORK_DIR) \
+	    -w $(RELAY_WORK_DIR) \
+	    -e "CROSS_COMPILE=TRUE" \
+	    -e "GOBUILD_TAGS=$(GOBUILD_TAGS)" \
+	    -e "GL_VERSION=$(GL_VERSION)" \
+	    $(BUILDDEPS_IMAGE) \
+	    make $(patsubst gorun-%,%,$@)
+
+relay-image: gorun-relay
 	@ echo "[#] Building image $(RELAY_IMAGE) for $(GL_VERSION)"
 	@ rm -rf $(RELAY_DOCKER_DIR)
 	@ \
-	BIN_DIR=$(abspath $(LINUX_BIN_DIR)) \
+        BIN_DIR=$(CROSSBIN_ROOT)-$$(docker inspect $(BUILDDEPS_IMAGE) --format "{{.Os}}-{{.Architecture}}") \
 	BIN_VERSION=$(GL_VERSION) \
 	BUILD_TAGS="$(GOBUILD_TAGS)" \
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 $(BUILD_ROOT)/docker/relay/build.sh $(RELAY_IMAGE) $(BUILD_ROOT) $(RELAY_DOCKER_DIR)
+	$(BUILD_ROOT)/docker/relay/build.sh $(RELAY_IMAGE) $(BUILD_ROOT) $(RELAY_DOCKER_DIR)
 
 test :
 	$(GOBUILD_ENVS) $(GOTEST) $(GOBUILD_FLAGS) ./... $(GOTEST_FLAGS)

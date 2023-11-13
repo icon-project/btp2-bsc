@@ -45,8 +45,6 @@ build_image() {
         --tag ${TAG} .
     local result=$?
 
-    docker save -o ${TAG}.tar ${TAG}
-
     cd ${CDIR}
     return $result
 }
