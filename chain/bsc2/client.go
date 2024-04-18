@@ -241,14 +241,18 @@ func (o *Client) MessagesAfterSequence(opts *bind.FilterOpts, sequence uint64) (
 			o.log.Errorf("fail to fetch messages - err(%s)", err.Error())
 			return nil, err
 		} else {
+			tmp := make([]*BTPMessageCenterMessage, 0)
 			for iter.Next() {
 				m := iter.Event
 				if m.Seq.Uint64() <= sequence {
 					continue
 				} else {
 					o.log.Debugf("message - sequence(%d) number(%d) hash(%s)", m.Seq.Uint64(), m.Raw.BlockNumber, m.Raw.BlockHash.Hex())
-					msgs = append(msgs, m)
+					tmp = append(tmp, m)
 				}
+			}
+			if len(tmp) > 0 {
+				msgs = append(tmp, msgs...)
 			}
 			if sp >= ep {
 				return msgs, nil
