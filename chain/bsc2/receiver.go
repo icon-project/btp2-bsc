@@ -16,11 +16,13 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
-	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/icon-project/btp2/common/db"
 	"github.com/icon-project/btp2/common/link"
 	"github.com/icon-project/btp2/common/log"
@@ -29,11 +31,10 @@ import (
 )
 
 const (
-	CacheSize          = 1024
-	CheckpointInterval = 256
-	DBName             = string("db")
-	BucketName         = db.BucketID("accumulator")
-	AccStateKey        = string("accumulator")
+	CacheSize   = 1024
+	DBName      = string("db")
+	BucketName  = db.BucketID("accumulator")
+	AccStateKey = string("accumulator")
 )
 
 var EmptyHash = common.Hash{}
@@ -433,16 +434,16 @@ func (o *receiver) hasMessages(finalities []common.Hash) (bool, error) {
 
 func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]link.BlockUpdate, error) {
 	peer := newStatus(status)
-	o.log.Tracef("Build block updates - P(%d:%.8s) L(%d:%d:%.8s)",
+	o.log.Debugf("Build block updates - P(%d:%.8s) L(%d:%d:%.8s)",
 		peer.number, peer.blocks.Root().Hex(), o.local.number, o.local.cache, o.local.hash)
-	defer o.log.Tracef("Done - Build block updates")
+	defer o.log.Debugf("Done - Build block updates")
 	if _, err := o.snapshots.get(peer.hash); err != nil {
 		o.log.Errorf("No header for finalized block number(%d)", peer.number)
 		return nil, errors.New("NoCachedHeader")
 	}
 
 	canonical := o.selectFork(peer.hash, peer.blocks)
-	o.log.Tracef("Canonical(%v)", canonical)
+	o.log.Debugf("Canonical(%v)", canonical)
 	calc := newBlockFinalityCalculator(peer.hash, canonical, o.snapshots, o.log)
 
 	heads := make([]*types.Header, 0)
@@ -518,7 +519,7 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 			},
 		}, nil
 	}
-	o.log.Tracef("NoAvailableHead")
+	o.log.Debugln("NoAvailableHead")
 	return []link.BlockUpdate{}, nil
 }
 
@@ -551,8 +552,8 @@ func (o *receiver) BuildBlockProof(status *btp.BMCLinkStatus, target int64) (lin
 }
 
 func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (link.MessageProof, error) {
-	o.log.Tracef("Build message proof - S(%d: %d: %d)", status.Verifier.Height, status.RxSeq, limit)
-	defer o.log.Tracef("Done - Build message proof")
+	o.log.Debugf("Build message proof - S(%d: %d: %d)", status.Verifier.Height, status.RxSeq, limit)
+	defer o.log.Debugf("Done - Build message proof")
 	sequence := uint64(status.RxSeq)
 	var msgs []*BTPMessageCenterMessage
 	for {
@@ -646,8 +647,8 @@ func (o *receiver) BuildMessageProof(status *btp.BMCLinkStatus, limit int64) (li
 }
 
 func (o *receiver) BuildRelayMessage(parts []link.RelayMessageItem) ([]byte, error) {
-	o.log.Tracef("++Recv::BuildRelayMessage - size(%d)\n", len(parts))
-	defer o.log.Traceln("--Recv::BuildRelayMessage")
+	o.log.Debugf("++Recv::BuildRelayMessage - size(%d)\n", len(parts))
+	defer o.log.Debugf("--Recv::BuildRelayMessage")
 	msg := &BSCRelayMessage{
 		TypePrefixedMessages: make([]BSCTypePrefixedMessage, 0),
 	}
@@ -804,7 +805,7 @@ func encodeForDerive(receipts types.Receipts, i int, buf *bytes.Buffer) []byte {
 }
 
 func newMTPWithReceipts(receipts types.Receipts) (*trie.Trie, error) {
-	trie, err := trie.New(common.Hash{}, trie.NewDatabase(memorydb.New()))
+	trie, err := trie.New(trie.TrieID(common.Hash{}), triedb.NewDatabase(rawdb.NewDatabase(memorydb.New()), nil))
 	if err != nil {
 		return nil, err
 	}
@@ -835,12 +836,12 @@ func newMTPWithReceipts(receipts types.Receipts) (*trie.Trie, error) {
 }
 
 func newProofOf(trie *trie.Trie, key []byte) ([][]byte, error) {
-	ns := light.NewNodeSet()
-	if err := trie.Prove(key, 0, ns); err != nil {
+	ns := trienode.NewProofSet()
+	if err := trie.Prove(key, ns); err != nil {
 		return nil, err
 	}
-	proof := make([][]byte, len(ns.NodeList()))
-	for i, n := range ns.NodeList() {
+	proof := make([][]byte, len(ns.List()))
+	for i, n := range ns.List() {
 		proof[i] = n
 	}
 	return proof, nil
