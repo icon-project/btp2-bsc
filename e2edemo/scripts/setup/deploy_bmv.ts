@@ -55,7 +55,7 @@ async function get_first_btpblock_header(network: IconNetwork, chain: any) {
 }
 
 async function deploy_bmv_jav(srcNetwork: IconNetwork, srcChain: any, params: any) {
-  const content = Jar.readFromFile(JAVASCORE_PATH, "bmv/bsc2");
+  const content = Jar.readFromFile(JAVASCORE_PATH, "bmv/bsc2", "0.6.0");
   console.log('src network:', srcNetwork);
   console.log('params:', params);
   const bmv = new Contract(srcNetwork)
@@ -94,27 +94,33 @@ async function genJavBmvParams(bmc: string, number: number) {
       recents.push(miner);
   }
 
+  let head = [
+    curr.parentHash,
+    curr.sha3Uncles,
+    curr.miner,
+    curr.stateRoot,
+    curr.transactionsRoot,
+    curr.receiptsRoot,
+    curr.logsBloom,
+    curr.difficulty,
+    curr.number,
+    curr.gasLimit,
+    curr.gasUsed,
+    curr.timestamp,
+    curr.extraData,
+    curr.mixHash,
+    curr.nonce,
+    curr.baseFeePerGas
+  ]
+
+  if (curr.withdrawalsRoot != null) {
+    head.push(curr.withdrawalsRoot, curr.blobGasUsed, curr.excessBlobGas);
+  }
+
   return {
       _bmc: bmc,
       _chainId: '0x' + (await ethers.provider.getNetwork()).chainId.toString(16),
-      _header: Buffer.from(rlp.encode([
-        curr.parentHash,
-        curr.sha3Uncles,
-        curr.miner,
-        curr.stateRoot,
-        curr.transactionsRoot,
-        curr.receiptsRoot,
-        curr.logsBloom,
-        curr.difficulty,
-        curr.number,
-        curr.gasLimit,
-        curr.gasUsed,
-        curr.timestamp,
-        curr.extraData,
-        curr.mixHash,
-        curr.nonce,
-        curr.baseFeePerGas
-      ])).toString('hex'),
+      _header: Buffer.from(rlp.encode(head)).toString('hex'),
       _recents: Buffer.from(rlp.encode(recents)).toString('hex'),
       _candidates: Buffer.from(rlp.encode(candidates)).toString('hex'),
       _validators: Buffer.from(rlp.encode(validators)).toString('hex')

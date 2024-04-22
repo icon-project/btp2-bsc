@@ -29,7 +29,6 @@ import (
 	"github.com/icon-project/btp2/common/log"
 	"github.com/icon-project/btp2/common/relay"
 
-	"github.com/icon-project/btp2-bsc/chain/bsc"
 	"github.com/icon-project/btp2-bsc/chain/bsc2"
 )
 
@@ -51,7 +50,6 @@ var logoLines = []string{
 
 func init() {
 	btp2.RegisterIconBtp2()
-	bsc.RegisterBscLuban()
 	bsc2.RegisterBscHertz()
 }
 
