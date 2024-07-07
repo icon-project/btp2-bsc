@@ -16,7 +16,7 @@ toolchain go1.22.1
 require (
 	github.com/ethereum/go-ethereum v1.13.13
 	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d
-	github.com/icon-project/btp2 v1.0.8
+	github.com/icon-project/btp2 v1.0.9
 	github.com/spf13/cobra v1.6.1
 	golang.org/x/crypto v0.17.0
 )
