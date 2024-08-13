@@ -31,6 +31,7 @@ type relayResult struct {
 }
 
 type sender struct {
+	cfg        SenderConfig
 	src, dst   btp.BtpAddress
 	chainId    *big.Int
 	epoch      uint64
@@ -43,15 +44,19 @@ type sender struct {
 }
 
 type SenderConfig struct {
-	SrcAddress btp.BtpAddress
-	DstAddress btp.BtpAddress
-	Endpoint   string
-	ChainID    uint64
-	Epoch      uint64
+	SrcAddress              btp.BtpAddress
+	DstAddress              btp.BtpAddress
+	Endpoint                string
+	ChainID                 uint64
+	Epoch                   uint64
+	MaxGasLimit             uint64
+	EstimateGasFactor       float64
+	BlockCheckpointInterval uint64
 }
 
 func newSender(config SenderConfig, wallet btp.Wallet, log log.Logger) btp.Sender {
 	o := &sender{
+		cfg:     config,
 		src:     config.SrcAddress,
 		dst:     config.DstAddress,
 		chainId: new(big.Int).SetUint64(config.ChainID),
@@ -60,8 +65,11 @@ func newSender(config SenderConfig, wallet btp.Wallet, log log.Logger) btp.Sende
 		log:     log,
 		client:  NewClient(config.Endpoint, config.DstAddress, config.SrcAddress, log),
 	}
-	o.snapshots = newSnapshots(o.chainId, o.client.Client, CacheSize, nil, log)
-	o.transactor = newMessageTransactor(o.snapshots, o.log)
+	o.snapshots = newSnapshots(o.chainId, o.client.Client, o.cfg.BlockCheckpointInterval, CacheSize, nil, log)
+	o.transactor = newMessageTransactor(MessageTransactorConfig{
+		MaxGasLimit:       o.cfg.MaxGasLimit,
+		EstimateGasFactor: o.cfg.EstimateGasFactor,
+	}, o.snapshots, o.log)
 	return o
 }
 
@@ -175,7 +183,7 @@ func (o *sender) GetStatus() (*btp.BMCLinkStatus, error) {
 		BlockNumber: new(big.Int).SetUint64(o.finality.Number),
 		Context:     context.Background(),
 	}, o.src.String()); err != nil {
-		o.log.Errorf("fail to retrieve bmc status - err(%s)\n", err.Error())
+		o.log.Errorf("fail to retrieve bmc status - %d %s err(%s)\n", o.finality.Number, o.src.String(), err.Error())
 		return nil, err
 	} else {
 		return &btp.BMCLinkStatus{

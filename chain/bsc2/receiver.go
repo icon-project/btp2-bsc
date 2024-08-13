@@ -40,17 +40,19 @@ const (
 var EmptyHash = common.Hash{}
 
 type RecvConfig struct {
-	ChainID     uint64 `json:"chain_id"`
-	Epoch       uint64 `json:"epoch"`
-	StartNumber uint64 `json:"start_height"`
-	Endpoint    string `json:"endpoint"`
-	DBType      string `json:"db_type"`
-	DBPath      string `json:"db_path"`
-	SrcAddress  btp.BtpAddress
-	DstAddress  btp.BtpAddress
+	ChainID                 uint64 `json:"chain_id"`
+	Epoch                   uint64 `json:"epoch"`
+	StartNumber             uint64 `json:"start_height"`
+	Endpoint                string `json:"endpoint"`
+	DBType                  string `json:"db_type"`
+	DBPath                  string `json:"db_path"`
+	SrcAddress              btp.BtpAddress
+	DstAddress              btp.BtpAddress
+	BlockCheckpointInterval uint64
 }
 
 type receiver struct {
+	cfg         RecvConfig
 	chainId     *big.Int
 	epoch       uint64
 	startnumber uint64
@@ -70,6 +72,7 @@ type receiver struct {
 
 func newReceiver(config RecvConfig, log log.Logger) *receiver {
 	o := &receiver{
+		cfg:         config,
 		chainId:     new(big.Int).SetUint64(config.ChainID),
 		epoch:       config.Epoch,
 		startnumber: config.StartNumber,
@@ -115,7 +118,7 @@ func newReceiver(config RecvConfig, log log.Logger) *receiver {
 				o.accumulator.Height(), o.accumulator.Offset())
 		}
 	}
-	o.snapshots = newSnapshots(o.chainId, o.client.Client, CacheSize, o.database, o.log)
+	o.snapshots = newSnapshots(o.chainId, o.client.Client, o.cfg.BlockCheckpointInterval, CacheSize, o.database, o.log)
 	return o
 }
 
