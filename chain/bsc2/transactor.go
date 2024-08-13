@@ -54,7 +54,13 @@ func (o MessageType) String() string {
 	}
 }
 
+type MessageTransactorConfig struct {
+	MaxGasLimit       uint64
+	EstimateGasFactor float64
+}
+
 type MessageTransactor struct {
+	cfg        MessageTransactorConfig
 	snapshots  *Snapshots
 	replies    chan<- *btp.RelayResult
 	finalities chan common.Hash
@@ -64,8 +70,9 @@ type MessageTransactor struct {
 	log        log.Logger
 }
 
-func newMessageTransactor(snapshots *Snapshots, log log.Logger) *MessageTransactor {
+func newMessageTransactor(cfg MessageTransactorConfig, snapshots *Snapshots, log log.Logger) *MessageTransactor {
 	return &MessageTransactor{
+		cfg:        cfg,
 		snapshots:  snapshots,
 		log:        log,
 		finalities: make(chan common.Hash),
@@ -96,7 +103,7 @@ func (o *MessageTransactor) Run(replies chan<- *btp.RelayResult) {
 		select {
 		case msg := <-o.transition:
 			go func() {
-				if msg = msg.Transit(); msg != nil {
+				if msg = msg.Transit(o.cfg); msg != nil {
 					o.Send(msg)
 				}
 			}()
@@ -167,12 +174,12 @@ func (o *MessageTransactor) tryFinalizeInLock(finality common.Hash, msg MessageT
 			log:  o.log,
 		}
 	}
-	return exec.Transit()
+	return exec.Transit(o.cfg)
 }
 
 type MessageTx interface {
 	Type() MessageType
-	Transit() MessageTx
+	Transit(MessageTransactorConfig) MessageTx
 	Raw() *btp.RelayResult
 }
 
@@ -201,8 +208,16 @@ func (o *CreatedMessage) Type() MessageType {
 	return Created
 }
 
-func (o *CreatedMessage) Transit() MessageTx {
+func (o *CreatedMessage) Transit(cfg MessageTransactorConfig) MessageTx {
+	if cfg.MaxGasLimit > 0 {
+		o.opts.GasLimit = cfg.MaxGasLimit
+	}
+
 	if o.opts.GasLimit == uint64(0) {
+		if cfg.MaxGasLimit > 0 {
+			o.opts.GasLimit = cfg.MaxGasLimit
+		}
+
 		o.opts.NoSend = true
 		for ErrCounter := 0; ; ErrCounter++ {
 			if tx, err := o.client.BTPMessageCenter.HandleRelayMessage(o.opts, o.from, o.blob); err != nil {
@@ -220,7 +235,7 @@ func (o *CreatedMessage) Transit() MessageTx {
 				continue
 			} else {
 				o.opts.NoSend = false
-				o.opts.GasLimit = uint64(float64(tx.Gas()) * 1.3)
+				o.opts.GasLimit = uint64(float64(tx.Gas()) * cfg.EstimateGasFactor)
 				o.log.Debugf("Original GasLimit(%d), Enough GasLimit(%d)", tx.Gas(), o.opts.GasLimit)
 				break
 			}
@@ -268,7 +283,7 @@ func (o *PendingMessage) Raw() *btp.RelayResult {
 	return nil
 }
 
-func (o *PendingMessage) Transit() MessageTx {
+func (o *PendingMessage) Transit(_ MessageTransactorConfig) MessageTx {
 	var err error
 	pending := true
 	attempt := int64(0)
@@ -336,7 +351,7 @@ func (o *ExecutingMessage) Type() MessageType {
 	return Executing
 }
 
-func (o *ExecutingMessage) Transit() MessageTx {
+func (o *ExecutingMessage) Transit(_ MessageTransactorConfig) MessageTx {
 	if o.receipt.Status == types.ReceiptStatusSuccessful {
 		o.log.Infof("MessageTransition(E->EE) ID(%s) Tx(%s)", o.id, o.tx.Hash().Hex())
 		return &ExecutedMessage{
@@ -410,7 +425,7 @@ func (o *ExecutedMessage) Type() MessageType {
 	return Executed
 }
 
-func (o *ExecutedMessage) Transit() MessageTx {
+func (o *ExecutedMessage) Transit(_ MessageTransactorConfig) MessageTx {
 	o.log.Infof("MessageTransition(EE->FN) ID(%s) Tx(%s)", o.id, o.tx.Hex())
 	return &FinalizedMessage{o}
 }
@@ -435,7 +450,7 @@ func (o *FinalizedMessage) Type() MessageType {
 	return Finalized
 }
 
-func (o *FinalizedMessage) Transit() MessageTx {
+func (o *FinalizedMessage) Transit(_ MessageTransactorConfig) MessageTx {
 	o.log.Debugf("MessageTransition(FN->Nil)")
 	return nil
 }
@@ -457,7 +472,7 @@ func (o *DroppedMessage) Type() MessageType {
 	return Dropped
 }
 
-func (o *DroppedMessage) Transit() MessageTx {
+func (o *DroppedMessage) Transit(_ MessageTransactorConfig) MessageTx {
 	o.log.Debugf("MessageTransition(D->Nil)")
 	return nil
 }
@@ -481,7 +496,7 @@ func (o *FaultedMessage) Type() MessageType {
 	return Faulted
 }
 
-func (o *FaultedMessage) Transit() MessageTx {
+func (o *FaultedMessage) Transit(_ MessageTransactorConfig) MessageTx {
 	o.log.Debugf("MessageTransition(F->Nil)")
 	return nil
 }

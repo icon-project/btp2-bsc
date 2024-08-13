@@ -12,24 +12,22 @@ import (
 	"github.com/icon-project/btp2/common/log"
 )
 
-const (
-	SnapCheckPoint = 1024
-)
-
 type Snapshots struct {
-	chainId  *big.Int
-	database db.Database
-	cache    *lru.ARCCache
-	client   *ethclient.Client
-	log      log.Logger
+	chainId    *big.Int
+	database   db.Database
+	cache      *lru.ARCCache
+	client     *ethclient.Client
+	checkpoint uint64
+	log        log.Logger
 }
 
-func newSnapshots(chainId *big.Int, client *ethclient.Client, cacheSize int, database db.Database, log log.Logger) *Snapshots {
+func newSnapshots(chainId *big.Int, client *ethclient.Client, checkpoint uint64, cacheSize int, database db.Database, log log.Logger) *Snapshots {
 	snaps := &Snapshots{
-		chainId:  chainId,
-		client:   client,
-		database: database,
-		log:      log,
+		chainId:    chainId,
+		client:     client,
+		database:   database,
+		checkpoint: checkpoint,
+		log:        log,
 	}
 
 	if cache, err := lru.NewARC(cacheSize); err != nil {
@@ -73,7 +71,7 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 
 func (o *Snapshots) add(snap *Snapshot) error {
 	o.cache.Add(snap.Hash, snap)
-	if o.database != nil && snap.Number%SnapCheckPoint == 0 {
+	if o.database != nil && snap.Number%o.checkpoint == 0 {
 		if err := snap.store(o.database); err != nil {
 			return err
 		}

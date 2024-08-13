@@ -42,14 +42,15 @@ func NewReceiver(srcCfg link.ChainConfig, dstAddr types.BtpAddress, baseDir stri
 	src := srcCfg.(chain.BaseConfig)
 
 	return newReceiver(RecvConfig{
-		ChainID:     ChainID(src.Endpoint),
-		Epoch:       uint64(Epoch),
-		StartNumber: convToUint64(src.Options, "start_number", 0),
-		SrcAddress:  src.Address,
-		DstAddress:  dstAddr,
-		Endpoint:    src.Endpoint,
-		DBType:      fmt.Sprintf("%v", src.Options["db_type"]),
-		DBPath:      fmt.Sprintf("%v", src.Options["db_path"]),
+		ChainID:                 ChainID(src.Endpoint),
+		Epoch:                   uint64(Epoch),
+		StartNumber:             convToUint64(src.Options, "start_number", 0),
+		SrcAddress:              src.Address,
+		DstAddress:              dstAddr,
+		Endpoint:                src.Endpoint,
+		DBType:                  fmt.Sprintf("%v", src.Options["db_type"]),
+		DBPath:                  fmt.Sprintf("%v", src.Options["db_path"]),
+		BlockCheckpointInterval: convToUint64(src.Options, "block_checkpoint_interval", 1024),
 	}, l), nil
 }
 
@@ -62,11 +63,15 @@ func NewSender(srcAddr types.BtpAddress, dstCfg link.ChainConfig, baseDir string
 	}
 
 	return newSender(SenderConfig{
-		SrcAddress: srcAddr,
-		DstAddress: dst.Address,
-		Endpoint:   dst.Endpoint,
-		ChainID:    ChainID(dst.Endpoint),
-		Epoch:      uint64(Epoch)}, w, l), nil
+		SrcAddress:              srcAddr,
+		DstAddress:              dst.Address,
+		Endpoint:                dst.Endpoint,
+		ChainID:                 ChainID(dst.Endpoint),
+		Epoch:                   uint64(Epoch),
+		MaxGasLimit:             convToUint64(dst.Options, "max_gas_limit", 0),
+		EstimateGasFactor:       convToFloat64(dst.Options, "estimate_gas_factor", 1.5),
+		BlockCheckpointInterval: convToUint64(dst.Options, "block_checkpoint_interval", 1024),
+	}, w, l), nil
 }
 
 func newWallet(passwd, secret string, keyStorePath string) (types.Wallet, error) {
@@ -97,6 +102,18 @@ func convToUint64(m map[string]interface{}, k string, def uint64) uint64 {
 		return def
 	} else {
 		if val, err := strconv.ParseUint(fmt.Sprintf("%v", val), 10, 64); err != nil {
+			panic(err)
+		} else {
+			return val
+		}
+	}
+}
+
+func convToFloat64(m map[string]interface{}, k string, def float64) float64 {
+	if val, ok := m[k]; !ok {
+		return def
+	} else {
+		if val, err := strconv.ParseFloat(fmt.Sprintf("%v", val), 64); err != nil {
 			panic(err)
 		} else {
 			return val
