@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
 	errs "github.com/icon-project/btp2/common/errors"
 	btp "github.com/icon-project/btp2/common/types"
 )
@@ -61,6 +62,7 @@ type MessageTransactorConfig struct {
 
 type MessageTransactor struct {
 	cfg        MessageTransactorConfig
+	config     *params.ChainConfig
 	snapshots  *Snapshots
 	replies    chan<- *btp.RelayResult
 	finalities chan common.Hash
@@ -70,9 +72,10 @@ type MessageTransactor struct {
 	log        log.Logger
 }
 
-func newMessageTransactor(cfg MessageTransactorConfig, snapshots *Snapshots, log log.Logger) *MessageTransactor {
+func newMessageTransactor(cfg MessageTransactorConfig, config *params.ChainConfig, snapshots *Snapshots, log log.Logger) *MessageTransactor {
 	return &MessageTransactor{
 		cfg:        cfg,
+		config:     config,
 		snapshots:  snapshots,
 		log:        log,
 		finalities: make(chan common.Hash),
@@ -152,7 +155,7 @@ func (o *MessageTransactor) tryFinalizeInLock(finality common.Hash, msg MessageT
 		o.log.Panicf("ForbiddenMessage(%s)", msg.Type())
 	}
 
-	snap, err := o.snapshots.get(finality)
+	snap, err := o.snapshots.get(o.config, finality)
 	if err != nil {
 		o.log.Panicln(err.Error())
 	}
@@ -161,7 +164,7 @@ func (o *MessageTransactor) tryFinalizeInLock(finality common.Hash, msg MessageT
 		return exec
 	}
 	for exec.number < snap.Number {
-		if snap, err = o.snapshots.get(snap.ParentHash); err != nil {
+		if snap, err = o.snapshots.get(o.config, snap.ParentHash); err != nil {
 			o.log.Panicln(err.Error())
 		}
 	}

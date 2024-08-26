@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/params"
 
 	lru "github.com/hashicorp/golang-lru"
 
@@ -53,6 +54,7 @@ type RecvConfig struct {
 
 type receiver struct {
 	cfg         RecvConfig
+	config      *params.ChainConfig
 	chainId     *big.Int
 	epoch       uint64
 	startnumber uint64
@@ -81,6 +83,13 @@ func newReceiver(config RecvConfig, log log.Logger) *receiver {
 		peer:        &bstatus{},
 		cond:        sync.NewCond(&sync.Mutex{}),
 		log:         log,
+	}
+
+	switch config.ChainID {
+	case 56:
+		o.config = params.BSCChainConfig
+	case 97:
+		o.config = params.ChapelChainConfig
 	}
 
 	if cache, err := lru.NewARC(CacheSize); err != nil {
@@ -209,7 +218,7 @@ func (o *receiver) recoverable(err error) bool {
 }
 
 func (o *receiver) applyAndCache(snap *Snapshot, head *types.Header) (*Snapshot, error) {
-	next, err := snap.apply(head, o.chainId)
+	next, err := snap.apply(o.config, head, o.chainId)
 	if err != nil {
 		o.log.Warnf("fail to apply snapshot - err(%s)", err)
 		return nil, err
@@ -239,9 +248,9 @@ var ErrInconsistentCount = 0
 func (o *receiver) loop(hash common.Hash, och chan<- interface{}) error {
 	o.log.Tracef("StartReceiverLoop")
 	headCh := make(chan *types.Header)
-	calc := newBlockFinalityCalculator(hash, make([]common.Hash, 0), o.snapshots, o.log)
+	calc := newBlockFinalityCalculator(o.config, hash, make([]common.Hash, 0), o.snapshots, o.log)
 
-	snap, err := o.snapshots.get(hash)
+	snap, err := o.snapshots.get(o.config, hash)
 	if err != nil {
 		o.log.Panicf("NoSnapshot(%s)", hash)
 	}
@@ -271,7 +280,7 @@ func (o *receiver) loop(hash common.Hash, och chan<- interface{}) error {
 			final := fnzs[len(fnzs)-1]
 			var number uint64
 			var hash common.Hash
-			if snap, err := o.snapshots.get(final); err != nil {
+			if snap, err := o.snapshots.get(o.config, final); err != nil {
 				o.log.Panicln(err.Error())
 			} else {
 				// latest finalized block number
@@ -323,7 +332,7 @@ func (o *receiver) updateStatus(number uint64, hash common.Hash, sequence uint64
 func (o *receiver) queryAndCacheMessages(child, ancestor common.Hash) (uint64, error) {
 	var sequence uint64
 	for child != ancestor {
-		snap, _ := o.snapshots.get(child)
+		snap, _ := o.snapshots.get(o.config, child)
 		o.log.Debugf("Query Message BlockHash(%d:%s)", snap.Number, snap.Hash)
 		ms, err := o.client.MessagesByBlockHash(context.Background(), child)
 		if err != nil {
@@ -340,7 +349,7 @@ func (o *receiver) queryAndCacheMessages(child, ancestor common.Hash) (uint64, e
 			}
 		}
 
-		if snap, err := o.snapshots.get(child); err != nil {
+		if snap, err := o.snapshots.get(o.config, child); err != nil {
 			return sequence, err
 		} else {
 			child = snap.ParentHash
@@ -402,7 +411,7 @@ func (o *receiver) selectFork(from common.Hash, blocks *BlockTree) []common.Hash
 
 		var hash common.Hash
 		for _, child := range children {
-			snap, err := o.snapshots.get(child)
+			snap, err := o.snapshots.get(o.config, child)
 			if err == nil {
 				hash = snap.Hash
 				break
@@ -440,14 +449,14 @@ func (o *receiver) BuildBlockUpdate(status *btp.BMCLinkStatus, limit int64) ([]l
 	o.log.Debugf("Build block updates - P(%d:%.8s) L(%d:%d:%.8s)",
 		peer.number, peer.blocks.Root().Hex(), o.local.number, o.local.cache, o.local.hash)
 	defer o.log.Debugf("Done - Build block updates")
-	if _, err := o.snapshots.get(peer.hash); err != nil {
+	if _, err := o.snapshots.get(o.config, peer.hash); err != nil {
 		o.log.Errorf("No header for finalized block number(%d)", peer.number)
 		return nil, errors.New("NoCachedHeader")
 	}
 
 	canonical := o.selectFork(peer.hash, peer.blocks)
 	o.log.Debugf("Canonical(%v)", canonical)
-	calc := newBlockFinalityCalculator(peer.hash, canonical, o.snapshots, o.log)
+	calc := newBlockFinalityCalculator(o.config, peer.hash, canonical, o.snapshots, o.log)
 
 	heads := make([]*types.Header, 0)
 	parent := peer.hash
@@ -749,7 +758,7 @@ func (o *receiver) prepare() error {
 	}
 
 	if !ok {
-		snap, err := BootSnapshot(o.epoch, head, o.client.Client, o.log)
+		snap, err := BootSnapshot(o.config, o.epoch, head, o.client.Client, o.log)
 		if err != nil {
 			return err
 		}
@@ -773,7 +782,7 @@ func (o *receiver) synchronize(until *big.Int) error {
 
 	// synchronize snapshots
 	o.log.Infof("synchronize block snapshots - until(%s)", hash)
-	if err := o.snapshots.ensure(hash); err != nil {
+	if err := o.snapshots.ensure(o.config, hash); err != nil {
 		o.log.Errorf("fail to load past snapshots - err(%+v)", err)
 		return err
 	}
