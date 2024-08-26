@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/icon-project/btp2/common/errors"
 	"github.com/icon-project/btp2/common/log"
 	btp "github.com/icon-project/btp2/common/types"
@@ -32,6 +33,7 @@ type relayResult struct {
 
 type sender struct {
 	cfg        SenderConfig
+	config     *params.ChainConfig
 	src, dst   btp.BtpAddress
 	chainId    *big.Int
 	epoch      uint64
@@ -65,11 +67,17 @@ func newSender(config SenderConfig, wallet btp.Wallet, log log.Logger) btp.Sende
 		log:     log,
 		client:  NewClient(config.Endpoint, config.DstAddress, config.SrcAddress, log),
 	}
+	switch config.ChainID {
+	case 56:
+		o.config = params.BSCChainConfig
+	case 97:
+		o.config = params.ChapelChainConfig
+	}
 	o.snapshots = newSnapshots(o.chainId, o.client.Client, o.cfg.BlockCheckpointInterval, CacheSize, nil, log)
 	o.transactor = newMessageTransactor(MessageTransactorConfig{
 		MaxGasLimit:       o.cfg.MaxGasLimit,
 		EstimateGasFactor: o.cfg.EstimateGasFactor,
-	}, o.snapshots, o.log)
+	}, o.config, o.snapshots, o.log)
 	return o
 }
 
@@ -111,7 +119,7 @@ func (o *sender) prepare() error {
 	}
 
 	// check block finality by the nearest epoch block
-	if snap, err := BootSnapshot(o.epoch, head, o.client.Client, o.log); err != nil {
+	if snap, err := BootSnapshot(o.config, o.epoch, head, o.client.Client, o.log); err != nil {
 		return err
 	} else {
 		o.log.Debugf("make initial snapshot - number(%d) hash(%s)", snap.Number, snap.Hash.Hex())
@@ -127,7 +135,7 @@ func (o *sender) watchBlockFinalities() error {
 	headCh := make(chan *types.Header)
 	number := new(big.Int).SetUint64(o.finality.Number + uint64(1))
 	snap := o.finality
-	calc := newBlockFinalityCalculator(o.finality.Hash, make([]common.Hash, 0), o.snapshots, o.log)
+	calc := newBlockFinalityCalculator(o.config, o.finality.Hash, make([]common.Hash, 0), o.snapshots, o.log)
 	o.log.Tracef("new calculator - addr(%p) number(%d) hash(%s)", calc, o.finality.Number, o.finality.Hash.Hex())
 	var err error
 	sub := o.client.WatchHeader(context.Background(), number, headCh)
@@ -137,7 +145,7 @@ func (o *sender) watchBlockFinalities() error {
 			o.log.Errorf("Watcher error(%+v)", err)
 			return err
 		case head := <-headCh:
-			snap, err = snap.apply(head, o.chainId)
+			snap, err = snap.apply(o.config, head, o.chainId)
 			if err != nil {
 				o.log.Errorf("fail to apply snapshot - err(%+v)", err)
 				sub.Unsubscribe()
@@ -158,7 +166,7 @@ func (o *sender) watchBlockFinalities() error {
 				if len(fnzs) <= 0 {
 					break
 				}
-				fn, err := o.snapshots.get(fnzs[len(fnzs)-1])
+				fn, err := o.snapshots.get(o.config, fnzs[len(fnzs)-1])
 				if err != nil {
 					o.log.Errorf("fail to get snapshot - err(%+v)", err)
 					sub.Unsubscribe()

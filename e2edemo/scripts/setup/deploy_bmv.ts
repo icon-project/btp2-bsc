@@ -10,6 +10,27 @@ const EPOCH = 200;
 
 const deployments = Deployments.getDefault();
 
+function get_chain_config(chainId) {
+  if (chainId == 56) {
+    return {
+      Bohr: null
+    }
+  } else if (chainId == 97) {
+    return {
+      Bohr: 1724116996
+    }
+  } else {
+    return {
+      Bohr: null
+    }
+  }
+}
+
+function is_bohr(chainId: number, timestamp: number) {
+  let config = get_chain_config(chainId);
+  return config.Bohr <= timestamp;
+}
+
 async function open_btp_network(src: string, dst: string, icon: any) {
   // open BTP network first before deploying BMV
   const iconNetwork = IconNetwork.getNetwork(src);
@@ -55,7 +76,7 @@ async function get_first_btpblock_header(network: IconNetwork, chain: any) {
 }
 
 async function deploy_bmv_jav(srcNetwork: IconNetwork, srcChain: any, params: any) {
-  const content = Jar.readFromFile(JAVASCORE_PATH, "bmv/bsc2", "0.6.0");
+  const content = Jar.readFromFile(JAVASCORE_PATH, "bmv/bsc2", "0.7.0");
   console.log('src network:', srcNetwork);
   console.log('params:', params);
   const bmv = new Contract(srcNetwork)
@@ -83,8 +104,14 @@ async function genJavBmvParams(bmc: string, number: number) {
   console.log('trusted block number:', tarnum);
   const curr = await headByNumber(tarnum);
   const prev = tarnum != 0 ? await headByNumber(tarnum - EPOCH) : curr;
-  let validators = parseValidators(Buffer.from(prev.extraData.slice(2, prev.extraData.length), 'hex'));
-  let candidates = parseValidators(Buffer.from(curr.extraData.slice(2, curr.extraData.length), 'hex'));
+
+  let prevExtra = Buffer.from(prev.extraData.slice(2, prev.extraData.length), 'hex');
+  let nextExtra = Buffer.from(curr.extraData.slice(2, curr.extraData.length), 'hex');
+  let validators = parseValidators(prevExtra);
+  let candidates = parseValidators(nextExtra);
+  let { chainId } = (await ethers.provider.getNetwork());
+  let currTurnLength = parseTurnLength(chainId, parseInt(prev.timestamp, 16), prevExtra);
+  let nextTurnLength = parseTurnLength(chainId, parseInt(curr.timestamp, 16), nextExtra);
 
   console.log('validators:', validators);
 
@@ -123,7 +150,9 @@ async function genJavBmvParams(bmc: string, number: number) {
       _header: Buffer.from(rlp.encode(head)).toString('hex'),
       _recents: Buffer.from(rlp.encode(recents)).toString('hex'),
       _candidates: Buffer.from(rlp.encode(candidates)).toString('hex'),
-      _validators: Buffer.from(rlp.encode(validators)).toString('hex')
+      _validators: Buffer.from(rlp.encode(validators)).toString('hex'),
+      _currTurnLength: '0x' + currTurnLength.toString(16),
+      _nextTurnLength: '0x' + nextTurnLength.toString(16),
   }
 }
 const BlsPubLenth = 48;
@@ -132,15 +161,15 @@ const ValidatorBytesLengthLuban = EthAddrLength + BlsPubLenth;
 const ExtraVanity = 32;
 const ExtraSeal = 65;
 const ValidatorNumberSize = 1;
+const TurnLengthSize = 1;
 
 function parseValidators(extra) {
-  console.log('etra:', extra.toString('hex'));
   if (extra.length <= ExtraVanity + ExtraSeal) {
     throw new Error("Wrong Validator Bytes");
   }
 
   const num = Buffer.from(extra, 'hex')[ExtraVanity];
-  const start = ExtraVanity + 1;
+  const start = ExtraVanity + ValidatorNumberSize;
   const end = start + num * ValidatorBytesLengthLuban;
   const validatorsBytes = Buffer.from(extra.slice(start, end));
   let validators = [];
@@ -151,6 +180,24 @@ function parseValidators(extra) {
     ]);
   }
   return validators;
+}
+
+function parseTurnLength(chainId, timestamp, extra) {
+  if (extra.length <= ExtraVanity + ExtraSeal) {
+    throw new Error("Wrong Validator Bytes");
+  }
+  const num = Buffer.from(extra, 'hex')[ExtraVanity];
+  if (is_bohr(chainId, timestamp)) {
+    const pos = ExtraVanity + ValidatorNumberSize + num * ValidatorBytesLengthLuban
+    if (extra.length <= pos) {
+      throw new Error("Invalid Turn Length")
+    }
+    const turns = Buffer.from(extra, 'hex')[pos];
+    console.log(" >> Turn Length:", turns);
+    return turns
+  } else {
+    return 1;
+  }
 }
 
 async function deploy_bmv_sol(src: string, dst: string, srcChain: any, dstChain: any) {
@@ -166,7 +213,7 @@ async function deploy_bmv_sol(src: string, dst: string, srcChain: any, dstChain:
   // deploy BMV-BTPBlock solidity for dst network
   const firstBlockHeader = await get_first_btpblock_header(dstNetwork, dstChain);
   const BMVBtp = await ethers.getContractFactory("BtpMessageVerifier");
-  const bmvBtp = await BMVBtp.deploy(srcChain.contracts.bmc, dstChain.network, dstChain.networkTypeId, firstBlockHeader, '0x0');
+  const bmvBtp = await BMVBtp.deploy(srcChain.contracts.bmc, dstChain.network, dstChain.networkTypeId, firstBlockHeader, '0x0', '0x0');
   await bmvBtp.deployed()
   srcChain.contracts.bmv = bmvBtp.address
   console.log(`${dst}: BMV: deployed to ${bmvBtp.address}`);

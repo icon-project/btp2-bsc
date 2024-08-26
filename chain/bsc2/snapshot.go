@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/icon-project/btp2/common/db"
 	"golang.org/x/crypto/sha3"
@@ -27,6 +28,7 @@ const (
 	extraSeal            = 65 // Fixed number of extra-data suffix bytes reserved for signer seal
 	epoch                = 200
 	validatorNumberSize  = 1 // Fixed number of extra prefix bytes reserved for validator number after Luban
+	turnLengthSize       = 1
 )
 
 // validatorsAscending implements the sort interface to allow sorting a list of addresses
@@ -39,15 +41,17 @@ func (s validatorsAscending) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 type Snapshot struct {
 	// config // epoch
 
-	Number      uint64                      `json:"number"`
-	Hash        common.Hash                 `json:"hash"`
-	ParentHash  common.Hash                 `json:"parent_hash"`
-	Sealer      common.Address              `json:"sealer"`
-	Validators  map[common.Address]struct{} `json:"validators"`
-	Candidates  map[common.Address]struct{} `json:"candidates"`
-	Recents     map[uint64]common.Address   `json:"recents"`
-	Attestation *types.VoteData             `json:"attestation"`
-	log         log.Logger
+	Number         uint64                      `json:"number"`
+	Hash           common.Hash                 `json:"hash"`
+	ParentHash     common.Hash                 `json:"parent_hash"`
+	Sealer         common.Address              `json:"sealer"`
+	Validators     map[common.Address]struct{} `json:"validators"`
+	Candidates     map[common.Address]struct{} `json:"candidates"`
+	Recents        map[uint64]common.Address   `json:"recents"`
+	Attestation    *types.VoteData             `json:"attestation"`
+	CurrTurnLength uint8                       `json:"curr_turn_length"`
+	NextTurnLength uint8                       `json:"next_turn_length"`
+	log            log.Logger
 }
 
 // newSnapshot creates a new snapshot with the specified startup parameters. This
@@ -62,17 +66,21 @@ func newSnapshot(
 	attestation *types.VoteData,
 	sealer common.Address,
 	parentHash common.Hash,
+	currTurnLength uint8,
+	nextTurnLength uint8,
 	log log.Logger,
 ) *Snapshot {
 	snap := &Snapshot{
-		Number:     number,
-		Hash:       hash,
-		ParentHash: parentHash,
-		Validators: make(map[common.Address]struct{}),
-		Candidates: make(map[common.Address]struct{}),
-		Recents:    make(map[uint64]common.Address),
-		Sealer:     sealer,
-		log:        log,
+		Number:         number,
+		Hash:           hash,
+		ParentHash:     parentHash,
+		Validators:     make(map[common.Address]struct{}),
+		Candidates:     make(map[common.Address]struct{}),
+		Recents:        make(map[uint64]common.Address),
+		Sealer:         sealer,
+		CurrTurnLength: currTurnLength,
+		NextTurnLength: nextTurnLength,
+		log:            log,
 	}
 	for _, v := range validators {
 		snap.Validators[v] = struct{}{}
@@ -122,6 +130,12 @@ func loadSnapshot(database db.Database, hash common.Hash, log log.Logger) (*Snap
 		if err := json.Unmarshal(blob, snap); err != nil {
 			return nil, err
 		}
+		if snap.CurrTurnLength <= 0 {
+			snap.CurrTurnLength = 1
+		}
+		if snap.NextTurnLength <= 0 {
+			snap.NextTurnLength = 1
+		}
 		snap.log = log
 		return snap, nil
 	}
@@ -141,14 +155,16 @@ func hasSnapshot(database db.Database, hash common.Hash) (bool, error) {
 // copy creates a deep copy of the snapshot
 func (s *Snapshot) copy() *Snapshot {
 	cpy := &Snapshot{
-		Number:     s.Number,
-		Hash:       s.Hash,
-		ParentHash: s.ParentHash,
-		Validators: make(map[common.Address]struct{}),
-		Candidates: make(map[common.Address]struct{}),
-		Recents:    make(map[uint64]common.Address),
-		Sealer:     s.Sealer,
-		log:        s.log,
+		Number:         s.Number,
+		Hash:           s.Hash,
+		ParentHash:     s.ParentHash,
+		Validators:     make(map[common.Address]struct{}),
+		Candidates:     make(map[common.Address]struct{}),
+		Recents:        make(map[uint64]common.Address),
+		Sealer:         s.Sealer,
+		CurrTurnLength: s.CurrTurnLength,
+		NextTurnLength: s.NextTurnLength,
+		log:            s.log,
 	}
 
 	for v := range s.Validators {
@@ -171,9 +187,9 @@ func (s *Snapshot) copy() *Snapshot {
 	return cpy
 }
 
-func (s *Snapshot) updateAttestation(header *types.Header) {
+func (s *Snapshot) updateAttestation(config *params.ChainConfig, header *types.Header) {
 	// The attestation should have been checked in verify header, update directly
-	atte, _ := getVoteAttestationFromHeader(header)
+	atte, _ := getVoteAttestationFromHeader(config, header)
 	if atte == nil {
 		s.log.Infof("NoVoteAttestation - H(%d:%.8s)", header.Number.Uint64(), header.Hash().Hex())
 		return
@@ -202,7 +218,7 @@ func (s *Snapshot) updateAttestation(header *types.Header) {
 }
 
 // TODO handle recent fork hash
-func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
+func (s *Snapshot) apply(config *params.ChainConfig, head *types.Header, cid *big.Int) (*Snapshot, error) {
 	if head == nil {
 		return s, nil
 	}
@@ -218,7 +234,7 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 
 	snap := s.copy()
 	number := head.Number.Uint64()
-	if limit := uint64(len(snap.Validators)/2 + 1); number >= limit {
+	if limit := snap.minerHistoryCheckLen() + 1; number >= limit {
 		delete(snap.Recents, number-limit)
 	}
 	validator, err := ecrecover(head, cid)
@@ -228,26 +244,37 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 	if _, ok := snap.Validators[validator]; !ok {
 		return nil, errors.New("UnauthorizedValidator")
 	}
-	for _, recent := range snap.Recents {
-		if recent == validator {
+	if config.IsBohr(head.Number, head.Time) {
+		if snap.SignRecently(validator) {
 			return nil, errors.New("RecentlySigned")
+		}
+	} else {
+		for _, recent := range snap.Recents {
+			if recent == validator {
+				return nil, errors.New("RecentlySigned")
+			}
 		}
 	}
 	snap.Recents[number] = validator
 
-	if number > 0 && number%uint64(epoch) == uint64(len(snap.Validators)/2) {
-		oldLimit := len(snap.Validators)/2 + 1
-		newLimit := len(snap.Candidates)/2 + 1
-		if newLimit < oldLimit {
-			for i := 0; i < oldLimit-newLimit; i++ {
-				delete(snap.Recents, number-uint64(newLimit)-uint64(i))
+	if number > 0 && number%uint64(epoch) == snap.minerHistoryCheckLen() {
+		if config.IsBohr(head.Number, head.Time) {
+			snap.Recents = make(map[uint64]common.Address)
+		} else {
+			oldLimit := len(snap.Validators)/2 + 1
+			newLimit := len(snap.Candidates)/2 + 1
+			if newLimit < oldLimit {
+				for i := 0; i < oldLimit-newLimit; i++ {
+					delete(snap.Recents, number-uint64(newLimit)-uint64(i))
+				}
 			}
 		}
 		snap.Validators = snap.Candidates
+		snap.CurrTurnLength = snap.NextTurnLength
 	}
 
 	if number > 0 && number%uint64(epoch) == 0 {
-		newValArr, err := parseValidators(head)
+		newValArr, err := parseValidators(config, head)
 		if err != nil {
 			return nil, err
 		}
@@ -256,13 +283,66 @@ func (s *Snapshot) apply(head *types.Header, cid *big.Int) (*Snapshot, error) {
 			newVals[val] = struct{}{}
 		}
 		snap.Candidates = newVals
+
+		turnLength, err := parseTurnLength(config, head)
+		if err != nil {
+			return nil, err
+		}
+		snap.NextTurnLength = turnLength
 	}
-	snap.updateAttestation(head)
+	snap.updateAttestation(config, head)
 	snap.Number += uint64(1)
 	snap.Hash = head.Hash()
 	snap.ParentHash = head.ParentHash
 	snap.Sealer = validator
 	return snap, nil
+}
+
+func parseTurnLength(config *params.ChainConfig, head *types.Header) (uint8, error) {
+	if len(head.Extra) <= extraVanity+extraSeal {
+		return 0, errors.New("invalid span validators")
+	}
+	num := int(head.Extra[extraVanity])
+	pos := extraVanity + validatorNumberSize + num*validatorBytesLength
+	if len(head.Extra) <= pos {
+		return 0, errors.New("invalid turn length")
+	}
+	return head.Extra[pos], nil
+}
+
+func (s *Snapshot) countRecents() map[common.Address]uint8 {
+	leftHistoryBound := uint64(0) // the bound is excluded
+	checkHistoryLength := s.minerHistoryCheckLen()
+	if s.Number > checkHistoryLength {
+		leftHistoryBound = s.Number - checkHistoryLength
+	}
+	counts := make(map[common.Address]uint8, len(s.Validators))
+	for seen, recent := range s.Recents {
+		if seen <= leftHistoryBound || recent == (common.Address{}) /*when seen == `epochKey`*/ {
+			continue
+		}
+		counts[recent] += 1
+	}
+	return counts
+}
+
+func (s *Snapshot) signRecentlyByCounts(validator common.Address, counts map[common.Address]uint8) bool {
+	if seenTimes, ok := counts[validator]; ok && seenTimes >= s.CurrTurnLength {
+		if seenTimes > s.CurrTurnLength {
+			log.Warn("produce more blocks than expected!", "validator", validator, "seenTimes", seenTimes)
+		}
+		return true
+	}
+
+	return false
+}
+
+func (s *Snapshot) SignRecently(validator common.Address) bool {
+	return s.signRecentlyByCounts(validator, s.countRecents())
+}
+
+func (s *Snapshot) minerHistoryCheckLen() uint64 {
+	return (uint64(len(s.Validators))/2+1)*uint64(s.CurrTurnLength) - 1
 }
 
 // inturn returns if a validator at a given block height is in-turn or not.
@@ -282,22 +362,8 @@ func (s *Snapshot) validators() []common.Address {
 	return validators
 }
 
-// func ParseValidators(header *types.Header) ([]common.Address, error) {
-// 	validatorsBytes := getValidatorBytesFromHeader(header)
-// 	if len(validatorsBytes) == 0 {
-// 		return nil, errors.New("invalid validators bytes")
-// 	}
-//
-// 	n := len(validatorsBytes) / validatorBytesLength
-// 	cnsAddrs := make([]common.Address, n)
-// 	for i := 0; i < n; i++ {
-// 		cnsAddrs[i] = common.BytesToAddress(validatorsBytes[i*validatorBytesLength : i*validatorBytesLength+common.AddressLength])
-// 	}
-// 	return cnsAddrs, nil
-// }
-
-func parseValidators(header *types.Header) ([]common.Address /*, []types.BLSPublicKey*/, error) {
-	validatorsBytes := getValidatorBytesFromHeader(header)
+func parseValidators(config *params.ChainConfig, header *types.Header) ([]common.Address /*, []types.BLSPublicKey*/, error) {
+	validatorsBytes := getValidatorBytesFromHeader(config, header)
 	if len(validatorsBytes) == 0 {
 		return nil, errors.New("invalid validators bytes")
 	}
@@ -317,7 +383,8 @@ func parseValidators(header *types.Header) ([]common.Address /*, []types.BLSPubl
 // On luban fork, we introduce vote attestation into the header's extra field, so extra format is different from before.
 // Before luban fork: |---Extra Vanity---|---Validators Bytes (or Empty)---|---Extra Seal---|
 // After luban fork:  |---Extra Vanity---|---Validators Number and Validators Bytes (or Empty)---|---Vote Attestation (or Empty)---|---Extra Seal---|
-func getValidatorBytesFromHeader(header *types.Header) []byte {
+// After bohr fork:   |---Extra Vanity---|---Validators Number and Validators Bytes (or Empty)---|---Turn Length (or Empty)---|---Vote Attestation (or Empty)---|---Extra Seal---|
+func getValidatorBytesFromHeader(config *params.ChainConfig, header *types.Header) []byte {
 	if len(header.Extra) <= extraVanity+extraSeal {
 		return nil
 	}
@@ -326,11 +393,15 @@ func getValidatorBytesFromHeader(header *types.Header) []byte {
 		return nil
 	}
 	num := int(header.Extra[extraVanity])
-	if num == 0 || len(header.Extra) <= extraVanity+extraSeal+num*validatorBytesLength {
+	start := extraVanity + validatorNumberSize
+	end := start + num*validatorBytesLength
+	extraMinLen := end + extraSeal
+	if config.IsBohr(header.Number, header.Time) {
+		extraMinLen += turnLengthSize
+	}
+	if num == 0 || len(header.Extra) < extraMinLen {
 		return nil
 	}
-	start := extraVanity + 1
-	end := start + num*validatorBytesLength
 	return header.Extra[start:end]
 }
 
@@ -371,7 +442,7 @@ func ecrecover(header *types.Header, chainId *big.Int) (common.Address, error) {
 	signature := header.Extra[len(header.Extra)-extraSeal:]
 
 	// Recover the public key and the Ethereum address
-	pubkey, err := crypto.Ecrecover(SealHash(header, chainId).Bytes(), signature)
+	pubkey, err := crypto.Ecrecover(types.SealHash(header, chainId).Bytes(), signature)
 	if err != nil {
 		return common.Address{}, err
 	}
@@ -404,7 +475,8 @@ func encodeSigHeader(w io.Writer, header *types.Header, chainId *big.Int) {
 		header.GasLimit,
 		header.GasUsed,
 		header.Time,
-		header.Extra[:len(header.Extra)-65], // this will panic if extra is too short, should check before calling encodeSigHeader
+		//header.Extra[:len(header.Extra)-65], // this will panic if extra is too short, should check before calling encodeSigHeader
+		header.Extra[:extraVanity], // this will panic if extra is too short, should check before calling encodeSigHeader
 		header.MixDigest,
 		header.Nonce,
 	})
@@ -413,21 +485,26 @@ func encodeSigHeader(w io.Writer, header *types.Header, chainId *big.Int) {
 	}
 }
 
-func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, log log.Logger) (*Snapshot, error) {
-	curVals, err := parseValidators(head)
+func BootSnapshot(config *params.ChainConfig, epoch uint64, head *types.Header, client *ethclient.Client, log log.Logger) (*Snapshot, error) {
+	curVals, err := parseValidators(config, head)
+	if err != nil {
+		return nil, err
+	}
+
+	curTurnLength, err := parseTurnLength(config, head)
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO null attestation
-	attestation, err := getVoteAttestationFromHeader(head)
+	attestation, err := getVoteAttestationFromHeader(config, head)
 	if err != nil {
 		return nil, err
 	}
 
 	if head.Number.Uint64() == 0 {
 		return newSnapshot(head.Number.Uint64(), head.Hash(), curVals, curVals,
-			make([]common.Address, 0), nil, head.Coinbase, head.ParentHash, log), nil
+			make([]common.Address, 0), nil, head.Coinbase, head.ParentHash, curTurnLength, curTurnLength, log), nil
 	}
 
 	number := new(big.Int).SetUint64(head.Number.Uint64() - epoch)
@@ -436,7 +513,12 @@ func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, lo
 		return nil, err
 	}
 
-	oldVals, err := parseValidators(oldHead)
+	oldVals, err := parseValidators(config, oldHead)
+	if err != nil {
+		return nil, err
+	}
+
+	oldTurnLength, err := parseTurnLength(config, oldHead)
 	if err != nil {
 		return nil, err
 	}
@@ -449,11 +531,11 @@ func BootSnapshot(epoch uint64, head *types.Header, client *ethclient.Client, lo
 			recents = append(recents, oldHead.Coinbase)
 		}
 	}
-	return newSnapshot(head.Number.Uint64(), head.Hash(), oldVals,
-		curVals, recents, attestation.Data, head.Coinbase, head.ParentHash, log), nil
+	return newSnapshot(head.Number.Uint64(), head.Hash(), oldVals, curVals, recents,
+		attestation.Data, head.Coinbase, head.ParentHash, oldTurnLength, curTurnLength, log), nil
 }
 
-func getVoteAttestationFromHeader(header *types.Header) (*types.VoteAttestation, error) {
+func getVoteAttestationFromHeader(config *params.ChainConfig, header *types.Header) (*types.VoteAttestation, error) {
 	if len(header.Extra) <= extraVanity+extraSeal {
 		return nil, nil
 	}
@@ -467,6 +549,9 @@ func getVoteAttestationFromHeader(header *types.Header) (*types.VoteAttestation,
 			return nil, nil
 		}
 		start := extraVanity + validatorNumberSize + num*validatorBytesLength
+		if config.IsBohr(header.Number, header.Time) {
+			start += turnLengthSize
+		}
 		end := len(header.Extra) - extraSeal
 		attestationBytes = header.Extra[start:end]
 	}

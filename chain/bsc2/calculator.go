@@ -4,18 +4,21 @@ import (
 	"bytes"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/icon-project/btp2/common/log"
 )
 
 type BlockFinalityCalculator struct {
+	config     *params.ChainConfig
 	checkpoint common.Hash
 	feeds      []common.Hash
 	snaps      *Snapshots
 	log        log.Logger
 }
 
-func newBlockFinalityCalculator(checkpoint common.Hash, feeds []common.Hash, snaps *Snapshots, log log.Logger) *BlockFinalityCalculator {
+func newBlockFinalityCalculator(config *params.ChainConfig, checkpoint common.Hash, feeds []common.Hash, snaps *Snapshots, log log.Logger) *BlockFinalityCalculator {
 	return &BlockFinalityCalculator{
+		config:     config,
 		checkpoint: checkpoint,
 		feeds:      feeds,
 		snaps:      snaps,
@@ -44,12 +47,12 @@ func (o *BlockFinalityCalculator) feed(feed common.Hash) ([]common.Hash, error) 
 }
 
 func (o *BlockFinalityCalculator) calculate() (common.Hash, error) {
-	snap, err := o.snaps.get(o.feeds[len(o.feeds)-1])
+	snap, err := o.snaps.get(o.config, o.feeds[len(o.feeds)-1])
 	if err != nil {
 		return common.Hash{}, err
 	}
 
-	checkpoint, err := o.snaps.get(o.checkpoint)
+	checkpoint, err := o.snaps.get(o.config, o.checkpoint)
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -65,7 +68,7 @@ func (o *BlockFinalityCalculator) calculate() (common.Hash, error) {
 			break
 		}
 
-		snap, err = o.snaps.get(snap.ParentHash)
+		snap, err = o.snaps.get(o.config, snap.ParentHash)
 		if err != nil {
 			return common.Hash{}, err
 		}

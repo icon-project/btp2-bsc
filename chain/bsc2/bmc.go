@@ -26,6 +26,7 @@ var (
 	_ = common.Big1
 	_ = types.BloomLookup
 	_ = event.NewSubscription
+	_ = abi.ConvertType
 )
 
 // IBMVVerifierStatus is an auto generated low-level Go binding around an user-defined struct.
@@ -59,9 +60,21 @@ type TypesLinkStatus struct {
 	CurrentHeight *big.Int
 }
 
+// TypesRoute is an auto generated low-level Go binding around an user-defined struct.
+type TypesRoute struct {
+	Dst  string
+	Next string
+}
+
+// TypesService is an auto generated low-level Go binding around an user-defined struct.
+type TypesService struct {
+	Svc  string
+	Addr common.Address
+}
+
 // BTPMessageCenterMetaData contains all meta data concerning the BTPMessageCenter contract.
 var BTPMessageCenterMetaData = &bind.MetaData{
-	ABI: "[{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_src\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"int256\",\"name\":\"_nsn\",\"type\":\"int256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_next\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_event\",\"type\":\"string\"}],\"name\":\"BTPEvent\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"_sender\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_receiver\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"_amount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"int256\",\"name\":\"_nsn\",\"type\":\"int256\"}],\"name\":\"ClaimReward\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"_sender\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"int256\",\"name\":\"_nsn\",\"type\":\"int256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"_result\",\"type\":\"uint256\"}],\"name\":\"ClaimRewardResult\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint8\",\"name\":\"version\",\"type\":\"uint8\"}],\"name\":\"Initialized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_next\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"_seq\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"}],\"name\":\"Message\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_prev\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"_seq\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"_ecode\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_emsg\",\"type\":\"string\"}],\"name\":\"MessageDropped\",\"type\":\"event\"},{\"stateMutability\":\"payable\",\"type\":\"receive\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"internalType\":\"address\",\"name\":\"_bmcManagementAddr\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"_bmcServiceAddr\",\"type\":\"address\"}],\"name\":\"initialize\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getBtpAddress\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getNetworkAddress\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_prev\",\"type\":\"string\"},{\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"}],\"name\":\"handleRelayMessage\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_to\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"_svc\",\"type\":\"string\"},{\"internalType\":\"int256\",\"name\":\"_sn\",\"type\":\"int256\"},{\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"}],\"name\":\"sendMessage\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"payable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getNetworkSn\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_to\",\"type\":\"string\"},{\"internalType\":\"bool\",\"name\":\"_response\",\"type\":\"bool\"}],\"name\":\"getFee\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_link\",\"type\":\"string\"}],\"name\":\"getStatus\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"rxSeq\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"txSeq\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"height\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"extra\",\"type\":\"bytes\"}],\"internalType\":\"structIBMV.VerifierStatus\",\"name\":\"verifier\",\"type\":\"tuple\"},{\"internalType\":\"uint256\",\"name\":\"currentHeight\",\"type\":\"uint256\"}],\"internalType\":\"structTypes.LinkStatus\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_next\",\"type\":\"string\"},{\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"}],\"name\":\"sendInternal\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_prev\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"_seq\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"string\",\"name\":\"src\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"dst\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"svc\",\"type\":\"string\"},{\"internalType\":\"int256\",\"name\":\"sn\",\"type\":\"int256\"},{\"internalType\":\"bytes\",\"name\":\"message\",\"type\":\"bytes\"},{\"internalType\":\"int256\",\"name\":\"nsn\",\"type\":\"int256\"},{\"components\":[{\"internalType\":\"string\",\"name\":\"network\",\"type\":\"string\"},{\"internalType\":\"uint256[]\",\"name\":\"values\",\"type\":\"uint256[]\"}],\"internalType\":\"structTypes.FeeInfo\",\"name\":\"feeInfo\",\"type\":\"tuple\"}],\"internalType\":\"structTypes.BTPMessage\",\"name\":\"_msg\",\"type\":\"tuple\"}],\"name\":\"dropMessage\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_link\",\"type\":\"string\"}],\"name\":\"clearSeq\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"internalType\":\"address\",\"name\":\"_addr\",\"type\":\"address\"}],\"name\":\"getReward\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_sender\",\"type\":\"address\"},{\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"internalType\":\"int256\",\"name\":\"_nsn\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"_result\",\"type\":\"uint256\"}],\"name\":\"emitClaimRewardResult\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"_receiver\",\"type\":\"string\"}],\"name\":\"claimReward\",\"outputs\":[],\"stateMutability\":\"payable\",\"type\":\"function\"}]",
+	ABI: "[{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_src\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"int256\",\"name\":\"_nsn\",\"type\":\"int256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_next\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_event\",\"type\":\"string\"}],\"name\":\"BTPEvent\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"_sender\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_receiver\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"_amount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"int256\",\"name\":\"_nsn\",\"type\":\"int256\"}],\"name\":\"ClaimReward\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"_sender\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"int256\",\"name\":\"_nsn\",\"type\":\"int256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"_result\",\"type\":\"uint256\"}],\"name\":\"ClaimRewardResult\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint8\",\"name\":\"version\",\"type\":\"uint8\"}],\"name\":\"Initialized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_next\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"_seq\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"}],\"name\":\"Message\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"string\",\"name\":\"_prev\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"_seq\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"_ecode\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_emsg\",\"type\":\"string\"}],\"name\":\"MessageDropped\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"string\",\"name\":\"_prev\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"_count\",\"type\":\"uint256\"}],\"name\":\"RelayMessage\",\"type\":\"event\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"_receiver\",\"type\":\"string\"}],\"name\":\"claimReward\",\"outputs\":[],\"stateMutability\":\"payable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_link\",\"type\":\"string\"}],\"name\":\"clearSeq\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_prev\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"_seq\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"string\",\"name\":\"src\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"dst\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"svc\",\"type\":\"string\"},{\"internalType\":\"int256\",\"name\":\"sn\",\"type\":\"int256\"},{\"internalType\":\"bytes\",\"name\":\"message\",\"type\":\"bytes\"},{\"internalType\":\"int256\",\"name\":\"nsn\",\"type\":\"int256\"},{\"components\":[{\"internalType\":\"string\",\"name\":\"network\",\"type\":\"string\"},{\"internalType\":\"uint256[]\",\"name\":\"values\",\"type\":\"uint256[]\"}],\"internalType\":\"structTypes.FeeInfo\",\"name\":\"feeInfo\",\"type\":\"tuple\"}],\"internalType\":\"structTypes.BTPMessage\",\"name\":\"_msg\",\"type\":\"tuple\"}],\"name\":\"dropMessage\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_sender\",\"type\":\"address\"},{\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"internalType\":\"int256\",\"name\":\"_nsn\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"_result\",\"type\":\"uint256\"}],\"name\":\"emitClaimRewardResult\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getBMCManagement\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getBMCService\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getBtpAddress\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_to\",\"type\":\"string\"},{\"internalType\":\"bool\",\"name\":\"_response\",\"type\":\"bool\"}],\"name\":\"getFee\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getLinks\",\"outputs\":[{\"internalType\":\"string[]\",\"name\":\"\",\"type\":\"string[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getMode\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getNetworkAddress\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getNetworkSn\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"internalType\":\"address\",\"name\":\"_addr\",\"type\":\"address\"}],\"name\":\"getReward\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getRoutes\",\"outputs\":[{\"components\":[{\"internalType\":\"string\",\"name\":\"dst\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"next\",\"type\":\"string\"}],\"internalType\":\"structTypes.Route[]\",\"name\":\"\",\"type\":\"tuple[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getServices\",\"outputs\":[{\"components\":[{\"internalType\":\"string\",\"name\":\"svc\",\"type\":\"string\"},{\"internalType\":\"address\",\"name\":\"addr\",\"type\":\"address\"}],\"internalType\":\"structTypes.Service[]\",\"name\":\"\",\"type\":\"tuple[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_link\",\"type\":\"string\"}],\"name\":\"getStatus\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"rxSeq\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"txSeq\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"height\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"extra\",\"type\":\"bytes\"}],\"internalType\":\"structIBMV.VerifierStatus\",\"name\":\"verifier\",\"type\":\"tuple\"},{\"internalType\":\"uint256\",\"name\":\"currentHeight\",\"type\":\"uint256\"}],\"internalType\":\"structTypes.LinkStatus\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_prev\",\"type\":\"string\"},{\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"}],\"name\":\"handleRelayMessage\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_network\",\"type\":\"string\"},{\"internalType\":\"address\",\"name\":\"_bmcManagementAddr\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"_bmcServiceAddr\",\"type\":\"address\"}],\"name\":\"initialize\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_next\",\"type\":\"string\"},{\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"}],\"name\":\"sendInternal\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_to\",\"type\":\"string\"},{\"internalType\":\"string\",\"name\":\"_svc\",\"type\":\"string\"},{\"internalType\":\"int256\",\"name\":\"_sn\",\"type\":\"int256\"},{\"internalType\":\"bytes\",\"name\":\"_msg\",\"type\":\"bytes\"}],\"name\":\"sendMessage\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"payable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"int256\",\"name\":\"_mode\",\"type\":\"int256\"}],\"name\":\"setMode\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"stateMutability\":\"payable\",\"type\":\"receive\"}]",
 }
 
 // BTPMessageCenterABI is the input ABI used to generate the binding from.
@@ -165,11 +178,11 @@ func NewBTPMessageCenterFilterer(address common.Address, filterer bind.ContractF
 
 // bindBTPMessageCenter binds a generic wrapper to an already deployed contract.
 func bindBTPMessageCenter(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
-	parsed, err := abi.JSON(strings.NewReader(BTPMessageCenterABI))
+	parsed, err := BTPMessageCenterMetaData.GetAbi()
 	if err != nil {
 		return nil, err
 	}
-	return bind.NewBoundContract(address, parsed, caller, transactor, filterer), nil
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
 }
 
 // Call invokes the (constant) contract method with params as input values and
@@ -208,6 +221,68 @@ func (_BTPMessageCenter *BTPMessageCenterTransactorRaw) Transfer(opts *bind.Tran
 // Transact invokes the (paid) contract method with params as input values.
 func (_BTPMessageCenter *BTPMessageCenterTransactorRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
 	return _BTPMessageCenter.Contract.contract.Transact(opts, method, params...)
+}
+
+// GetBMCManagement is a free data retrieval call binding the contract method 0xae86c53d.
+//
+// Solidity: function getBMCManagement() view returns(address)
+func (_BTPMessageCenter *BTPMessageCenterCaller) GetBMCManagement(opts *bind.CallOpts) (common.Address, error) {
+	var out []interface{}
+	err := _BTPMessageCenter.contract.Call(opts, &out, "getBMCManagement")
+
+	if err != nil {
+		return *new(common.Address), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
+
+	return out0, err
+
+}
+
+// GetBMCManagement is a free data retrieval call binding the contract method 0xae86c53d.
+//
+// Solidity: function getBMCManagement() view returns(address)
+func (_BTPMessageCenter *BTPMessageCenterSession) GetBMCManagement() (common.Address, error) {
+	return _BTPMessageCenter.Contract.GetBMCManagement(&_BTPMessageCenter.CallOpts)
+}
+
+// GetBMCManagement is a free data retrieval call binding the contract method 0xae86c53d.
+//
+// Solidity: function getBMCManagement() view returns(address)
+func (_BTPMessageCenter *BTPMessageCenterCallerSession) GetBMCManagement() (common.Address, error) {
+	return _BTPMessageCenter.Contract.GetBMCManagement(&_BTPMessageCenter.CallOpts)
+}
+
+// GetBMCService is a free data retrieval call binding the contract method 0xbe81db47.
+//
+// Solidity: function getBMCService() view returns(address)
+func (_BTPMessageCenter *BTPMessageCenterCaller) GetBMCService(opts *bind.CallOpts) (common.Address, error) {
+	var out []interface{}
+	err := _BTPMessageCenter.contract.Call(opts, &out, "getBMCService")
+
+	if err != nil {
+		return *new(common.Address), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
+
+	return out0, err
+
+}
+
+// GetBMCService is a free data retrieval call binding the contract method 0xbe81db47.
+//
+// Solidity: function getBMCService() view returns(address)
+func (_BTPMessageCenter *BTPMessageCenterSession) GetBMCService() (common.Address, error) {
+	return _BTPMessageCenter.Contract.GetBMCService(&_BTPMessageCenter.CallOpts)
+}
+
+// GetBMCService is a free data retrieval call binding the contract method 0xbe81db47.
+//
+// Solidity: function getBMCService() view returns(address)
+func (_BTPMessageCenter *BTPMessageCenterCallerSession) GetBMCService() (common.Address, error) {
+	return _BTPMessageCenter.Contract.GetBMCService(&_BTPMessageCenter.CallOpts)
 }
 
 // GetBtpAddress is a free data retrieval call binding the contract method 0x4f63a21d.
@@ -270,6 +345,68 @@ func (_BTPMessageCenter *BTPMessageCenterSession) GetFee(_to string, _response b
 // Solidity: function getFee(string _to, bool _response) view returns(uint256)
 func (_BTPMessageCenter *BTPMessageCenterCallerSession) GetFee(_to string, _response bool) (*big.Int, error) {
 	return _BTPMessageCenter.Contract.GetFee(&_BTPMessageCenter.CallOpts, _to, _response)
+}
+
+// GetLinks is a free data retrieval call binding the contract method 0xf66ddcbb.
+//
+// Solidity: function getLinks() view returns(string[])
+func (_BTPMessageCenter *BTPMessageCenterCaller) GetLinks(opts *bind.CallOpts) ([]string, error) {
+	var out []interface{}
+	err := _BTPMessageCenter.contract.Call(opts, &out, "getLinks")
+
+	if err != nil {
+		return *new([]string), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new([]string)).(*[]string)
+
+	return out0, err
+
+}
+
+// GetLinks is a free data retrieval call binding the contract method 0xf66ddcbb.
+//
+// Solidity: function getLinks() view returns(string[])
+func (_BTPMessageCenter *BTPMessageCenterSession) GetLinks() ([]string, error) {
+	return _BTPMessageCenter.Contract.GetLinks(&_BTPMessageCenter.CallOpts)
+}
+
+// GetLinks is a free data retrieval call binding the contract method 0xf66ddcbb.
+//
+// Solidity: function getLinks() view returns(string[])
+func (_BTPMessageCenter *BTPMessageCenterCallerSession) GetLinks() ([]string, error) {
+	return _BTPMessageCenter.Contract.GetLinks(&_BTPMessageCenter.CallOpts)
+}
+
+// GetMode is a free data retrieval call binding the contract method 0x4b4fd03b.
+//
+// Solidity: function getMode() view returns(int256)
+func (_BTPMessageCenter *BTPMessageCenterCaller) GetMode(opts *bind.CallOpts) (*big.Int, error) {
+	var out []interface{}
+	err := _BTPMessageCenter.contract.Call(opts, &out, "getMode")
+
+	if err != nil {
+		return *new(*big.Int), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	return out0, err
+
+}
+
+// GetMode is a free data retrieval call binding the contract method 0x4b4fd03b.
+//
+// Solidity: function getMode() view returns(int256)
+func (_BTPMessageCenter *BTPMessageCenterSession) GetMode() (*big.Int, error) {
+	return _BTPMessageCenter.Contract.GetMode(&_BTPMessageCenter.CallOpts)
+}
+
+// GetMode is a free data retrieval call binding the contract method 0x4b4fd03b.
+//
+// Solidity: function getMode() view returns(int256)
+func (_BTPMessageCenter *BTPMessageCenterCallerSession) GetMode() (*big.Int, error) {
+	return _BTPMessageCenter.Contract.GetMode(&_BTPMessageCenter.CallOpts)
 }
 
 // GetNetworkAddress is a free data retrieval call binding the contract method 0x6bf459cb.
@@ -363,6 +500,68 @@ func (_BTPMessageCenter *BTPMessageCenterSession) GetReward(_network string, _ad
 // Solidity: function getReward(string _network, address _addr) view returns(uint256)
 func (_BTPMessageCenter *BTPMessageCenterCallerSession) GetReward(_network string, _addr common.Address) (*big.Int, error) {
 	return _BTPMessageCenter.Contract.GetReward(&_BTPMessageCenter.CallOpts, _network, _addr)
+}
+
+// GetRoutes is a free data retrieval call binding the contract method 0x7e928072.
+//
+// Solidity: function getRoutes() view returns((string,string)[])
+func (_BTPMessageCenter *BTPMessageCenterCaller) GetRoutes(opts *bind.CallOpts) ([]TypesRoute, error) {
+	var out []interface{}
+	err := _BTPMessageCenter.contract.Call(opts, &out, "getRoutes")
+
+	if err != nil {
+		return *new([]TypesRoute), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new([]TypesRoute)).(*[]TypesRoute)
+
+	return out0, err
+
+}
+
+// GetRoutes is a free data retrieval call binding the contract method 0x7e928072.
+//
+// Solidity: function getRoutes() view returns((string,string)[])
+func (_BTPMessageCenter *BTPMessageCenterSession) GetRoutes() ([]TypesRoute, error) {
+	return _BTPMessageCenter.Contract.GetRoutes(&_BTPMessageCenter.CallOpts)
+}
+
+// GetRoutes is a free data retrieval call binding the contract method 0x7e928072.
+//
+// Solidity: function getRoutes() view returns((string,string)[])
+func (_BTPMessageCenter *BTPMessageCenterCallerSession) GetRoutes() ([]TypesRoute, error) {
+	return _BTPMessageCenter.Contract.GetRoutes(&_BTPMessageCenter.CallOpts)
+}
+
+// GetServices is a free data retrieval call binding the contract method 0x75417851.
+//
+// Solidity: function getServices() view returns((string,address)[])
+func (_BTPMessageCenter *BTPMessageCenterCaller) GetServices(opts *bind.CallOpts) ([]TypesService, error) {
+	var out []interface{}
+	err := _BTPMessageCenter.contract.Call(opts, &out, "getServices")
+
+	if err != nil {
+		return *new([]TypesService), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new([]TypesService)).(*[]TypesService)
+
+	return out0, err
+
+}
+
+// GetServices is a free data retrieval call binding the contract method 0x75417851.
+//
+// Solidity: function getServices() view returns((string,address)[])
+func (_BTPMessageCenter *BTPMessageCenterSession) GetServices() ([]TypesService, error) {
+	return _BTPMessageCenter.Contract.GetServices(&_BTPMessageCenter.CallOpts)
+}
+
+// GetServices is a free data retrieval call binding the contract method 0x75417851.
+//
+// Solidity: function getServices() view returns((string,address)[])
+func (_BTPMessageCenter *BTPMessageCenterCallerSession) GetServices() ([]TypesService, error) {
+	return _BTPMessageCenter.Contract.GetServices(&_BTPMessageCenter.CallOpts)
 }
 
 // GetStatus is a free data retrieval call binding the contract method 0x22b05ed2.
@@ -562,6 +761,27 @@ func (_BTPMessageCenter *BTPMessageCenterSession) SendMessage(_to string, _svc s
 // Solidity: function sendMessage(string _to, string _svc, int256 _sn, bytes _msg) payable returns(int256)
 func (_BTPMessageCenter *BTPMessageCenterTransactorSession) SendMessage(_to string, _svc string, _sn *big.Int, _msg []byte) (*types.Transaction, error) {
 	return _BTPMessageCenter.Contract.SendMessage(&_BTPMessageCenter.TransactOpts, _to, _svc, _sn, _msg)
+}
+
+// SetMode is a paid mutator transaction binding the contract method 0x2892cfee.
+//
+// Solidity: function setMode(int256 _mode) returns()
+func (_BTPMessageCenter *BTPMessageCenterTransactor) SetMode(opts *bind.TransactOpts, _mode *big.Int) (*types.Transaction, error) {
+	return _BTPMessageCenter.contract.Transact(opts, "setMode", _mode)
+}
+
+// SetMode is a paid mutator transaction binding the contract method 0x2892cfee.
+//
+// Solidity: function setMode(int256 _mode) returns()
+func (_BTPMessageCenter *BTPMessageCenterSession) SetMode(_mode *big.Int) (*types.Transaction, error) {
+	return _BTPMessageCenter.Contract.SetMode(&_BTPMessageCenter.TransactOpts, _mode)
+}
+
+// SetMode is a paid mutator transaction binding the contract method 0x2892cfee.
+//
+// Solidity: function setMode(int256 _mode) returns()
+func (_BTPMessageCenter *BTPMessageCenterTransactorSession) SetMode(_mode *big.Int) (*types.Transaction, error) {
+	return _BTPMessageCenter.Contract.SetMode(&_BTPMessageCenter.TransactOpts, _mode)
 }
 
 // Receive is a paid mutator transaction binding the contract receive function.
@@ -1489,6 +1709,141 @@ func (_BTPMessageCenter *BTPMessageCenterFilterer) WatchMessageDropped(opts *bin
 func (_BTPMessageCenter *BTPMessageCenterFilterer) ParseMessageDropped(log types.Log) (*BTPMessageCenterMessageDropped, error) {
 	event := new(BTPMessageCenterMessageDropped)
 	if err := _BTPMessageCenter.contract.UnpackLog(event, "MessageDropped", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// BTPMessageCenterRelayMessageIterator is returned from FilterRelayMessage and is used to iterate over the raw logs and unpacked data for RelayMessage events raised by the BTPMessageCenter contract.
+type BTPMessageCenterRelayMessageIterator struct {
+	Event *BTPMessageCenterRelayMessage // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *BTPMessageCenterRelayMessageIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(BTPMessageCenterRelayMessage)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(BTPMessageCenterRelayMessage)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *BTPMessageCenterRelayMessageIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *BTPMessageCenterRelayMessageIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// BTPMessageCenterRelayMessage represents a RelayMessage event raised by the BTPMessageCenter contract.
+type BTPMessageCenterRelayMessage struct {
+	Prev  string
+	Count *big.Int
+	Raw   types.Log // Blockchain specific contextual infos
+}
+
+// FilterRelayMessage is a free log retrieval operation binding the contract event 0x9d00c4ee88327dadcc532d1a160499ae4aea78d9cd8c7f1bc25146480cf27d42.
+//
+// Solidity: event RelayMessage(string _prev, uint256 _count)
+func (_BTPMessageCenter *BTPMessageCenterFilterer) FilterRelayMessage(opts *bind.FilterOpts) (*BTPMessageCenterRelayMessageIterator, error) {
+
+	logs, sub, err := _BTPMessageCenter.contract.FilterLogs(opts, "RelayMessage")
+	if err != nil {
+		return nil, err
+	}
+	return &BTPMessageCenterRelayMessageIterator{contract: _BTPMessageCenter.contract, event: "RelayMessage", logs: logs, sub: sub}, nil
+}
+
+// WatchRelayMessage is a free log subscription operation binding the contract event 0x9d00c4ee88327dadcc532d1a160499ae4aea78d9cd8c7f1bc25146480cf27d42.
+//
+// Solidity: event RelayMessage(string _prev, uint256 _count)
+func (_BTPMessageCenter *BTPMessageCenterFilterer) WatchRelayMessage(opts *bind.WatchOpts, sink chan<- *BTPMessageCenterRelayMessage) (event.Subscription, error) {
+
+	logs, sub, err := _BTPMessageCenter.contract.WatchLogs(opts, "RelayMessage")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(BTPMessageCenterRelayMessage)
+				if err := _BTPMessageCenter.contract.UnpackLog(event, "RelayMessage", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseRelayMessage is a log parse operation binding the contract event 0x9d00c4ee88327dadcc532d1a160499ae4aea78d9cd8c7f1bc25146480cf27d42.
+//
+// Solidity: event RelayMessage(string _prev, uint256 _count)
+func (_BTPMessageCenter *BTPMessageCenterFilterer) ParseRelayMessage(log types.Log) (*BTPMessageCenterRelayMessage, error) {
+	event := new(BTPMessageCenterRelayMessage)
+	if err := _BTPMessageCenter.contract.UnpackLog(event, "RelayMessage", log); err != nil {
 		return nil, err
 	}
 	event.Raw = log

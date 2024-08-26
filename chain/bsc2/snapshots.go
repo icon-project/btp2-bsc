@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/params"
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/icon-project/btp2/common/db"
 	"github.com/icon-project/btp2/common/log"
@@ -38,7 +39,7 @@ func newSnapshots(chainId *big.Int, client *ethclient.Client, checkpoint uint64,
 	return snaps
 }
 
-func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
+func (o *Snapshots) get(config *params.ChainConfig, id common.Hash) (*Snapshot, error) {
 	// on cache memory
 	if snap, ok := o.cache.Get(id); ok {
 		s := snap.(*Snapshot)
@@ -57,7 +58,7 @@ func (o *Snapshots) get(id common.Hash) (*Snapshot, error) {
 	}
 
 	// on network
-	if err := o.ensure(id); err != nil {
+	if err := o.ensure(config, id); err != nil {
 		return nil, err
 	}
 
@@ -79,7 +80,7 @@ func (o *Snapshots) add(snap *Snapshot) error {
 	return nil
 }
 
-func (o *Snapshots) ensure(id common.Hash) error {
+func (o *Snapshots) ensure(config *params.ChainConfig, id common.Hash) error {
 	if _, ok := o.cache.Get(id); ok {
 		return nil
 	}
@@ -119,7 +120,7 @@ func (o *Snapshots) ensure(id common.Hash) error {
 
 	for i := range heads {
 		var err error
-		snap, err = snap.apply(heads[len(heads)-1-i], o.chainId)
+		snap, err = snap.apply(config, heads[len(heads)-1-i], o.chainId)
 		if err != nil {
 			return err
 		}
