@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: iconloop
-  IMAGE_NAME: relay-bsc
+  IMAGE_NAME: btp2-bsc/relay
   TAG: latest
 
 jobs:
