@@ -6,6 +6,7 @@ on:
 
 env:
   REGISTRY: iconloop
+  ORIGIN_NAME: btp2-bsc/relay
   IMAGE_NAME: relay-bsc
   TAG: latest
 
@@ -28,7 +29,7 @@ jobs:
 
       - name: Push Docker image
         run: |
-          docker tag ${{ env.IMAGE_NAME }}:${{ env.TAG }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          docker tag ${{ env.ORIGIN_NAME }}:${{ env.TAG }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}:${{ env.TAG }}
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
-          docker tag ${{ env.IMAGE_NAME }}:${{ env.TAG }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          docker tag ${{ env.ORIGIN_NAME }}:${{ env.TAG }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
