@@ -127,6 +127,8 @@ func loadSnapshot(database db.Database, hash common.Hash, log log.Logger) (*Snap
 			return nil, err
 		}
 		snap := new(Snapshot)
+		snap.CurrTurnLength = 1
+		snap.NextTurnLength = 1
 		if err := json.Unmarshal(blob, snap); err != nil {
 			return nil, err
 		}
@@ -234,7 +236,7 @@ func (s *Snapshot) apply(config *params.ChainConfig, head *types.Header, cid *bi
 
 	snap := s.copy()
 	number := head.Number.Uint64()
-	if limit := snap.minerHistoryCheckLen() + 1; number >= limit {
+	if limit := s.minerHistoryCheckLen() + 1; number >= limit {
 		delete(snap.Recents, number-limit)
 	}
 	validator, err := ecrecover(head, cid)
@@ -246,12 +248,12 @@ func (s *Snapshot) apply(config *params.ChainConfig, head *types.Header, cid *bi
 	}
 	if config.IsBohr(head.Number, head.Time) {
 		if snap.SignRecently(validator) {
-			return nil, errors.New("RecentlySigned")
+			return nil, errors.New("RecentlySigned(>=Bohr)")
 		}
 	} else {
 		for _, recent := range snap.Recents {
 			if recent == validator {
-				return nil, errors.New("RecentlySigned")
+				return nil, errors.New("RecentlySigned(<Bohr)")
 			}
 		}
 	}
@@ -299,6 +301,9 @@ func (s *Snapshot) apply(config *params.ChainConfig, head *types.Header, cid *bi
 }
 
 func parseTurnLength(config *params.ChainConfig, head *types.Header) (uint8, error) {
+	if !config.IsBohr(head.Number, head.Time) {
+		return 1, nil
+	}
 	if len(head.Extra) <= extraVanity+extraSeal {
 		return 0, errors.New("invalid span validators")
 	}
